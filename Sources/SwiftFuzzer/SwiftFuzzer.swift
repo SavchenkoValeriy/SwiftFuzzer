@@ -5,9 +5,10 @@ import Basics
 import PackageModel
 import Workspace
 import PackageGraph
-@_spi(SwiftBuild) import Build
 import SPMBuildCore
+import Build
 import TSCBasic
+import TSCLibc
 
 @main
 struct SwiftFuzzer: AsyncParsableCommand {
@@ -18,15 +19,40 @@ struct SwiftFuzzer: AsyncParsableCommand {
     var configuration: String = "debug"
     
     func run() async throws {
-        let observability = ObservabilitySystem { _, _ in }
-        let fileSystem = Basics.localFileSystem
-        let packagePath = try Basics.AbsolutePath(validating: self.packagePath)
+        print("Building package at: \(packagePath)")
         
-        print("Loading package at: \(packagePath)")
+        let packagePath = try Basics.AbsolutePath(validating: self.packagePath)
+        let buildConfig = configuration == "release" ? BuildConfiguration.release : BuildConfiguration.debug
+        
+        // Create observability system that prints diagnostics
+        let observability = ObservabilitySystem { scope, diagnostic in
+            let diagnosticLevel = diagnostic.severity == .error ? "ERROR" : 
+                                 diagnostic.severity == .warning ? "WARNING" : "INFO"
+            print("[\(diagnosticLevel)] \(diagnostic.description)")
+            if let metadata = diagnostic.metadata {
+                print("  Metadata: \(String(describing: metadata))")
+            }
+        }
+        let fileSystem = Basics.localFileSystem
+        let buildPath = packagePath.appending(component: ".build")
+        
+        // Ensure build directories exist
+        try fileSystem.createDirectory(buildPath, recursive: true)
+        try fileSystem.createDirectory(buildPath.appending(component: buildConfig.dirname), recursive: true)
+        try fileSystem.createDirectory(buildPath.appending(component: "host"), recursive: true)
+        try fileSystem.createDirectory(buildPath.appending(component: "scratch"), recursive: true)
+        try fileSystem.createDirectory(buildPath.appending(component: "plugin-cache"), recursive: true)
         
         // Create workspace
         let workspace = try Workspace(
-            forRootPackage: packagePath
+            fileSystem: fileSystem,
+            forRootPackage: packagePath,
+            authorizationProvider: nil,
+            registryAuthorizationProvider: nil,
+            configuration: .default,
+            cancellator: nil,
+            customManifestLoader: nil,
+            delegate: nil
         )
         
         // Load package graph
@@ -36,47 +62,90 @@ struct SwiftFuzzer: AsyncParsableCommand {
         )
         
         print("Package loaded with \(graph.allModules.count) modules")
+        for module in graph.allModules {
+            print("Module: \(module.name) (type: \(module.type))")
+        }
         
-        // Build parameters
-        let buildPath = packagePath.appending(component: ".build")
+        // Create build parameters
         let toolchain = try UserToolchain(swiftSDK: .hostSwiftSDK())
+        let triple = toolchain.targetTriple
         
-        let buildParameters = try BuildParameters(
+        // Target build parameters (for the final products)
+        let targetBuildParameters = try BuildParameters(
             destination: .target,
-            dataPath: buildPath,
-            configuration: configuration == "release" ? .release : .debug,
+            dataPath: buildPath.appending(component: buildConfig.dirname),
+            configuration: buildConfig,
             toolchain: toolchain,
-            triple: toolchain.targetTriple,
+            triple: triple,
             flags: BuildFlags(),
-            buildSystemKind: .native
+            buildSystemKind: .native,
+            workers: UInt32(ProcessInfo.processInfo.activeProcessorCount),
+            sanitizers: EnabledSanitizers()
         )
         
-        // Create build operation
-        let outputStream = BufferedOutputByteStream()
-        let stream = ThreadSafeOutputByteStream(outputStream)
+        // Host build parameters (for build tools like macros)
+        let hostBuildParameters = try BuildParameters(
+            destination: .host,
+            dataPath: buildPath.appending(component: "host"),
+            configuration: buildConfig,
+            toolchain: toolchain,
+            triple: triple,
+            flags: BuildFlags(),
+            buildSystemKind: .native,
+            workers: UInt32(ProcessInfo.processInfo.activeProcessorCount),
+            sanitizers: EnabledSanitizers()
+        )
         
-        let buildOp = BuildOperation(
-            productsBuildParameters: buildParameters,
-            toolsBuildParameters: buildParameters,
-            cacheBuildManifest: false,
+        // Create BuildOperation
+        let cacheBuildManifest = false
+        let scratchDirectory = buildPath.appending(component: "scratch")
+        let outputStream = try! ThreadSafeOutputByteStream(LocalFileOutputByteStream(
+            filePointer: TSCLibc.stderr,
+            closeOnDeinit: false))
+        
+        print("Creating build operation...")
+        
+        // Create plugin configuration for packages with plugins
+        let pluginConfiguration = PluginConfiguration(
+            scriptRunner: DefaultPluginScriptRunner(
+                fileSystem: fileSystem,
+                cacheDir: buildPath.appending(component: "plugin-cache"),
+                toolchain: toolchain
+            ),
+            workDirectory: buildPath.appending(component: "plugin-cache"),
+            disableSandbox: false
+        )
+        
+        let build = BuildOperation(
+            productsBuildParameters: targetBuildParameters,
+            toolsBuildParameters: hostBuildParameters,
+            cacheBuildManifest: cacheBuildManifest,
             packageGraphLoader: { graph },
-            pluginConfiguration: nil,
-            scratchDirectory: buildPath.appending(component: "plugins"),
+            pluginConfiguration: pluginConfiguration,
+            scratchDirectory: scratchDirectory,
             additionalFileRules: [],
             pkgConfigDirectories: [],
-            outputStream: stream,
+            outputStream: outputStream,
             logLevel: .info,
             fileSystem: fileSystem,
             observabilityScope: observability.topScope
         )
         
-        // Build!
-        try await buildOp.build(subset: BuildSubset.allIncludingTests)
+        print("Starting build...")
         
-        print("Build completed successfully!")
-        
-        // Print build output
-        print("\nBuild output:")
-        print(outputStream.bytes.validDescription ?? "")
+        do {
+            try await build.build(subset: BuildSubset.allExcludingTests)
+            print("\nBuild completed successfully!")
+        } catch {
+            print("Build failed with error: \(error)")
+            // Print more detailed error information
+            print("Error details: \(String(describing: error))")
+            if let nsError = error as NSError? {
+                print("Error domain: \(nsError.domain)")
+                print("Error code: \(nsError.code)")
+                print("Error userInfo: \(nsError.userInfo)")
+            }
+            throw error
+        }
     }
 }

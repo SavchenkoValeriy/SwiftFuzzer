@@ -24,6 +24,9 @@ struct SwiftFuzzer: AsyncParsableCommand {
         let packagePath = try Basics.AbsolutePath(validating: self.packagePath)
         let buildConfig = configuration == "release" ? BuildConfiguration.release : BuildConfiguration.debug
         
+        print("Configuration: \(buildConfig.dirname)")
+        print("Package path: \(packagePath)")
+        
         // Create observability system that prints diagnostics
         let observability = ObservabilitySystem { scope, diagnostic in
             let diagnosticLevel = diagnostic.severity == .error ? "ERROR" : 
@@ -36,12 +39,46 @@ struct SwiftFuzzer: AsyncParsableCommand {
         let fileSystem = Basics.localFileSystem
         let buildPath = packagePath.appending(component: ".build")
         
-        // Ensure build directories exist
-        try fileSystem.createDirectory(buildPath, recursive: true)
-        try fileSystem.createDirectory(buildPath.appending(component: buildConfig.dirname), recursive: true)
-        try fileSystem.createDirectory(buildPath.appending(component: "host"), recursive: true)
-        try fileSystem.createDirectory(buildPath.appending(component: "scratch"), recursive: true)
-        try fileSystem.createDirectory(buildPath.appending(component: "plugin-cache"), recursive: true)
+        // CRITICAL: Remove problematic symlinks FIRST before any other operations
+        let problematicSymlink = buildPath.appending(component: buildConfig.dirname)
+        print("Checking for problematic symlink at: \(problematicSymlink)")
+        do {
+            // Check for symlink existence without following it (avoid circular resolution)
+            if fileSystem.isSymlink(problematicSymlink) {
+                print("Found problematic symlink, removing: \(problematicSymlink)")
+                try fileSystem.removeFileTree(problematicSymlink)
+                print("Successfully removed symlink: \(problematicSymlink)")
+            } else if fileSystem.exists(problematicSymlink, followSymlink: false) {
+                print("Found existing file/directory (not symlink), removing: \(problematicSymlink)")
+                try fileSystem.removeFileTree(problematicSymlink)
+                print("Successfully removed: \(problematicSymlink)")
+            } else {
+                print("No problematic symlink found at: \(problematicSymlink)")
+            }
+        } catch {
+            print("Warning: Could not remove \(problematicSymlink): \(error)")
+        }
+        
+        // Set up build directories - let SwiftPM manage most of the structure
+        let targetBuildPath = buildPath.appending(component: buildConfig.dirname)
+        let hostBuildPath = buildPath.appending(component: "host")
+        let scratchPath = buildPath.appending(component: "scratch")
+        let pluginCachePath = buildPath.appending(component: "plugin-cache")
+        
+        // Only ensure the base build directory exists
+        if !fileSystem.exists(buildPath) {
+            try fileSystem.createDirectory(buildPath, recursive: true)
+        }
+        
+        
+        // Let SwiftPM create the target directories - just ensure plugin and scratch dirs exist
+        if !fileSystem.exists(scratchPath) {
+            try fileSystem.createDirectory(scratchPath, recursive: true)
+        }
+        
+        if !fileSystem.exists(pluginCachePath) {
+            try fileSystem.createDirectory(pluginCachePath, recursive: true)
+        }
         
         // Create workspace
         let workspace = try Workspace(
@@ -73,7 +110,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
         // Target build parameters (for the final products)
         let targetBuildParameters = try BuildParameters(
             destination: .target,
-            dataPath: buildPath.appending(component: buildConfig.dirname),
+            dataPath: targetBuildPath,
             configuration: buildConfig,
             toolchain: toolchain,
             triple: triple,
@@ -86,7 +123,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
         // Host build parameters (for build tools like macros)
         let hostBuildParameters = try BuildParameters(
             destination: .host,
-            dataPath: buildPath.appending(component: "host"),
+            dataPath: hostBuildPath,
             configuration: buildConfig,
             toolchain: toolchain,
             triple: triple,
@@ -98,7 +135,6 @@ struct SwiftFuzzer: AsyncParsableCommand {
         
         // Create BuildOperation
         let cacheBuildManifest = false
-        let scratchDirectory = buildPath.appending(component: "scratch")
         let outputStream = try! ThreadSafeOutputByteStream(LocalFileOutputByteStream(
             filePointer: TSCLibc.stderr,
             closeOnDeinit: false))
@@ -109,10 +145,10 @@ struct SwiftFuzzer: AsyncParsableCommand {
         let pluginConfiguration = PluginConfiguration(
             scriptRunner: DefaultPluginScriptRunner(
                 fileSystem: fileSystem,
-                cacheDir: buildPath.appending(component: "plugin-cache"),
+                cacheDir: pluginCachePath,
                 toolchain: toolchain
             ),
-            workDirectory: buildPath.appending(component: "plugin-cache"),
+            workDirectory: pluginCachePath,
             disableSandbox: false
         )
         
@@ -122,7 +158,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
             cacheBuildManifest: cacheBuildManifest,
             packageGraphLoader: { graph },
             pluginConfiguration: pluginConfiguration,
-            scratchDirectory: scratchDirectory,
+            scratchDirectory: scratchPath,
             additionalFileRules: [],
             pkgConfigDirectories: [],
             outputStream: outputStream,

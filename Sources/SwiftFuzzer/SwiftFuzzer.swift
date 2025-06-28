@@ -18,6 +18,9 @@ struct SwiftFuzzer: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Build configuration (debug/release)")
     var configuration: String = "debug"
     
+    @Option(name: .long, help: "Specific target to build (builds all targets if not specified)")
+    var target: String?
+    
     func run() async throws {
         print("Building package at: \(packagePath)")
         
@@ -103,6 +106,27 @@ struct SwiftFuzzer: AsyncParsableCommand {
             print("Module: \(module.name) (type: \(module.type))")
         }
         
+        // Determine build subset based on target parameter
+        let buildSubset: BuildSubset
+        if let targetName = target {
+            // Validate that the target exists
+            let targetExists = graph.allModules.contains { $0.name == targetName }
+            guard targetExists else {
+                print("\nError: Target '\(targetName)' not found in package.")
+                print("Available targets:")
+                for module in graph.allModules {
+                    print("  - \(module.name) (type: \(module.type))")
+                }
+                throw ExitCode.failure
+            }
+            
+            buildSubset = .target(targetName)
+            print("\nBuilding target: \(targetName)")
+        } else {
+            buildSubset = .allExcludingTests
+            print("\nBuilding all targets (excluding tests)")
+        }
+        
         // Create build parameters
         let toolchain = try UserToolchain(swiftSDK: .hostSwiftSDK())
         let triple = toolchain.targetTriple
@@ -170,7 +194,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
         print("Starting build...")
         
         do {
-            try await build.build(subset: BuildSubset.allExcludingTests)
+            try await build.build(subset: buildSubset)
             print("\nBuild completed successfully!")
         } catch {
             print("Build failed with error: \(error)")

@@ -40,39 +40,22 @@ struct SwiftFuzzer: AsyncParsableCommand {
             }
         }
         let fileSystem = Basics.localFileSystem
-        let buildPath = packagePath.appending(component: ".build")
         
-        // CRITICAL: Remove problematic symlinks FIRST before any other operations
-        let problematicSymlink = buildPath.appending(component: buildConfig.dirname)
-        print("Checking for problematic symlink at: \(problematicSymlink)")
-        do {
-            // Check for symlink existence without following it (avoid circular resolution)
-            if fileSystem.isSymlink(problematicSymlink) {
-                print("Found problematic symlink, removing: \(problematicSymlink)")
-                try fileSystem.removeFileTree(problematicSymlink)
-                print("Successfully removed symlink: \(problematicSymlink)")
-            } else if fileSystem.exists(problematicSymlink, followSymlink: false) {
-                print("Found existing file/directory (not symlink), removing: \(problematicSymlink)")
-                try fileSystem.removeFileTree(problematicSymlink)
-                print("Successfully removed: \(problematicSymlink)")
-            } else {
-                print("No problematic symlink found at: \(problematicSymlink)")
-            }
-        } catch {
-            print("Warning: Could not remove \(problematicSymlink): \(error)")
+        // Create completely separate .fuzz directory with its own .build structure
+        // This prevents any interference with regular .build directory and symlinks
+        let fuzzRootPath = packagePath.appending(component: ".fuzz")
+        let fuzzBuildPath = fuzzRootPath.appending(component: ".build")
+        
+        // Set up fuzz build directories - SwiftPM will append configuration dirname automatically
+        let targetBuildPath = fuzzBuildPath
+        let hostBuildPath = fuzzBuildPath.appending(component: "host")
+        let scratchPath = fuzzBuildPath.appending(component: "scratch")
+        let pluginCachePath = fuzzBuildPath.appending(component: "plugin-cache")
+        
+        // Create the fuzz build directory structure
+        if !fileSystem.exists(fuzzBuildPath) {
+            try fileSystem.createDirectory(fuzzBuildPath, recursive: true)
         }
-        
-        // Set up build directories - let SwiftPM manage most of the structure
-        let targetBuildPath = buildPath.appending(component: buildConfig.dirname)
-        let hostBuildPath = buildPath.appending(component: "host")
-        let scratchPath = buildPath.appending(component: "scratch")
-        let pluginCachePath = buildPath.appending(component: "plugin-cache")
-        
-        // Only ensure the base build directory exists
-        if !fileSystem.exists(buildPath) {
-            try fileSystem.createDirectory(buildPath, recursive: true)
-        }
-        
         
         // Let SwiftPM create the target directories - just ensure plugin and scratch dirs exist
         if !fileSystem.exists(scratchPath) {

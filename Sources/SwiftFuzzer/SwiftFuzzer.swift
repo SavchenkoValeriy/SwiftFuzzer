@@ -149,34 +149,17 @@ struct SwiftFuzzer: AsyncParsableCommand {
         
         print("\nBuilding target: \(target) with fuzz instrumentation")
         
-        // Check if dependencies are already built
-        let regularBuildPath = packagePath.appending(component: ".build")
-        let regularTargetBuildDir = regularBuildPath.appending(components: "arm64-apple-macosx", buildConfig.dirname)
-        
-        let targetModule = graph.allModules.first { $0.name == target }!
-        let dependenciesExist = targetModule.dependencies.allSatisfy { dep in
-            let depName = switch dep {
-            case .module(let module, _): module.name
-            case .product(let product, _): product.name
-            }
-            let modulePath = regularTargetBuildDir.appending(component: "Modules").appending(component: "\(depName).swiftmodule")
-            return fileSystem.exists(modulePath)
-        }
-        
-        if !dependenciesExist {
-            // Step 1: Build dependencies in regular .build directory
-            print("\n🏗️  Step 1: Building dependencies in regular .build directory...")
-            try await buildDependencies(
-                packagePath: packagePath,
-                target: target,
-                buildConfig: buildConfig,
-                graph: graph,
-                observability: observability,
-                fileSystem: fileSystem
-            )
-        } else {
-            print("\n🏗️  Step 1: Dependencies already built, skipping...")
-        }
+        // Always build dependencies in regular .build directory to ensure they're up-to-date
+        // This is necessary because source files might have changed since last build
+        print("\n🏗️  Step 1: Building dependencies in regular .build directory...")
+        try await buildDependencies(
+            packagePath: packagePath,
+            target: target,
+            buildConfig: buildConfig,
+            graph: graph,
+            observability: observability,
+            fileSystem: fileSystem
+        )
         
         // Step 2: Link pre-built dependencies to fuzz directory
         print("\n🔗 Step 2: Linking dependencies to fuzz build...")
@@ -208,7 +191,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
         print("\n✅ Hybrid build completed successfully!")
     }
     
-    // Build dependencies in regular .build directory
+    // Build dependencies in regular .build directory using subprocess swift build
     func buildDependencies(
         packagePath: Basics.AbsolutePath,
         target: String,
@@ -217,100 +200,32 @@ struct SwiftFuzzer: AsyncParsableCommand {
         observability: ObservabilitySystem,
         fileSystem: any FileSystem
     ) async throws {
-        let regularBuildPath = packagePath.appending(component: ".build")
+        print("   Building all dependencies with regular swift build subprocess...")
         
-        // Create workspace for regular build  
-        let _ = try Workspace(
-            fileSystem: fileSystem,
-            forRootPackage: packagePath,
-            authorizationProvider: nil,
-            registryAuthorizationProvider: nil,
-            configuration: .default,
-            cancellator: nil,
-            customManifestLoader: nil,
-            delegate: nil
-        )
+        // Use subprocess swift build which is more reliable than internal BuildOperation
+        let buildProcess = Process()
+        buildProcess.launchPath = "/usr/bin/env"
+        buildProcess.arguments = [
+            "swift", "build", 
+            "-c", buildConfig.dirname,
+            "--package-path", packagePath.pathString
+        ]
         
-        // Get all dependencies for the target (including same-package dependencies)
-        let targetModule = graph.allModules.first { $0.name == target }!
-        let dependencies = targetModule.dependencies.compactMap { dep in
-            switch dep {
-            case .module(let module, _):
-                // Include all module dependencies, even from same package
-                return module.name != target ? module.name : nil
-            case .product(let product, _):
-                return product.name
-            }
+        let pipe = Pipe()
+        buildProcess.standardOutput = pipe
+        buildProcess.standardError = pipe
+        
+        try buildProcess.run()
+        buildProcess.waitUntilExit()
+        
+        // Read and print the output
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: data, encoding: .utf8), !output.isEmpty {
+            print(output)
         }
         
-        if dependencies.isEmpty {
-            print("   No dependencies to build for target '\(target)'")
-            return
-        }
-        
-        print("   Building dependencies: \(dependencies.joined(separator: ", "))")
-        
-        // Build each dependency
-        for dependencyName in dependencies {
-            print("   Building dependency: \(dependencyName)")
-            
-            let toolchain = try UserToolchain(swiftSDK: .hostSwiftSDK())
-            let triple = toolchain.targetTriple
-            
-            let targetBuildParameters = try BuildParameters(
-                destination: .target,
-                dataPath: regularBuildPath,
-                configuration: buildConfig,
-                toolchain: toolchain,
-                triple: triple,
-                flags: BuildFlags(),
-                buildSystemKind: .native,
-                workers: UInt32(ProcessInfo.processInfo.activeProcessorCount),
-                sanitizers: EnabledSanitizers()
-            )
-            
-            let hostBuildParameters = try BuildParameters(
-                destination: .host,
-                dataPath: regularBuildPath.appending(component: "host"),
-                configuration: buildConfig,
-                toolchain: toolchain,
-                triple: triple,
-                flags: BuildFlags(),
-                buildSystemKind: .native,
-                workers: UInt32(ProcessInfo.processInfo.activeProcessorCount),
-                sanitizers: EnabledSanitizers()
-            )
-            
-            let outputStream = try! ThreadSafeOutputByteStream(LocalFileOutputByteStream(
-                filePointer: TSCLibc.stderr,
-                closeOnDeinit: false))
-            
-            let pluginConfiguration = PluginConfiguration(
-                scriptRunner: DefaultPluginScriptRunner(
-                    fileSystem: fileSystem,
-                    cacheDir: regularBuildPath.appending(component: "plugin-cache"),
-                    toolchain: toolchain
-                ),
-                workDirectory: regularBuildPath.appending(component: "plugin-cache"),
-                disableSandbox: false
-            )
-            
-            let build = BuildOperation(
-                productsBuildParameters: targetBuildParameters,
-                toolsBuildParameters: hostBuildParameters,
-                cacheBuildManifest: false,
-                packageGraphLoader: { graph },
-                pluginConfiguration: pluginConfiguration,
-                scratchDirectory: regularBuildPath.appending(component: "scratch"),
-                additionalFileRules: [],
-                pkgConfigDirectories: [],
-                outputStream: outputStream,
-                logLevel: .info,
-                fileSystem: fileSystem,
-                observabilityScope: observability.topScope
-            )
-            
-            try await build.build(subset: BuildSubset.target(dependencyName))
+        guard buildProcess.terminationStatus == 0 else {
+            throw StringError("Dependencies build failed with exit code: \(buildProcess.terminationStatus)")
         }
         
         print("   Dependencies build completed!")
@@ -469,7 +384,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
         // Create build parameters that link to regular build dependencies
         let regularBuildDir = regularBuildPath.appending(component: buildConfig.dirname)
         let regularTargetBuildDir = regularBuildPath.appending(components: "arm64-apple-macosx", buildConfig.dirname)
-        let regularHostBuildDir = regularBuildPath.appending(components: "host", buildConfig.dirname)
+        let regularHostBuildDir = regularTargetBuildDir  // Use target build dir since that's where macro tools are built
         
         // Get all dependency module search paths
         var moduleSearchPaths: [String] = []
@@ -571,6 +486,15 @@ struct SwiftFuzzer: AsyncParsableCommand {
         
         print("   Found \(sourceFiles.count) source files for target '\(target)'")
         
+        // Set up output directory early for fuzzer entrypoint generation
+        let fuzzTargetBuildDir = fuzzBuildPath.appending(component: buildConfig.dirname)
+        let outputDir = fuzzTargetBuildDir.appending(component: "\(target).build")
+        
+        // Ensure output directory exists
+        if !fileSystem.exists(outputDir) {
+            try fileSystem.createDirectory(outputDir, recursive: true)
+        }
+        
         // Check if target source contains LLVMFuzzerTestOneInput 
         let targetDefinesLLVMFuzzer = sourceFiles.contains { sourceFile in
             guard let sourcePath = try? Basics.AbsolutePath(validating: sourceFile),
@@ -582,6 +506,27 @@ struct SwiftFuzzer: AsyncParsableCommand {
                 return false
             }
         }
+        
+        // Always generate fuzzer entrypoint file for automatic integration
+        var allSourceFiles = sourceFiles
+        let fuzzerEntrypointPath = outputDir.appending(component: "FuzzerEntrypoint.swift")
+        let fuzzerEntrypointContent = """
+import Foundation
+import FuzzTest
+
+@_cdecl("LLVMFuzzerTestOneInput")
+public func LLVMFuzzerTestOneInput(_ data: UnsafePointer<UInt8>, _ size: Int) -> Int32 {
+    let testData = Data(bytes: data, count: size)
+    
+    FuzzTestRegistry.initialize()
+    FuzzTestRegistry.runAll(with: testData)
+    
+    return 0
+}
+"""
+        try fileSystem.writeFileContents(fuzzerEntrypointPath, string: fuzzerEntrypointContent)
+        allSourceFiles.append(fuzzerEntrypointPath.pathString)
+        print("   Generated fuzzer entrypoint file: FuzzerEntrypoint.swift")
         
         // Find object files for all dependencies after checking if target defines LLVMFuzzer
         for depName in allDependencies {
@@ -601,36 +546,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
                     for objFile in objFiles {
                         let objPath = objectDir.appending(component: objFile).pathString
                         
-                        // If this is FuzzTest and target defines LLVMFuzzer, create a modified object file
-                        if targetDefinesLLVMFuzzer && depName == "FuzzTest" && objFile.contains("FuzzTest") {
-                            let modifiedObjPath = fuzzBuildPath.appending(components: buildConfig.dirname, "modified_\(objFile)").pathString
-                            
-                            // Copy the object file and remove the conflicting symbol using ld
-                            let tempProcess = Process()
-                            tempProcess.executableURL = URL(fileURLWithPath: "/usr/bin/ld")
-                            tempProcess.arguments = [
-                                "-r", objPath,
-                                "-unexported_symbol", "_LLVMFuzzerTestOneInput",
-                                "-o", modifiedObjPath
-                            ]
-                            
-                            do {
-                                try tempProcess.run()
-                                tempProcess.waitUntilExit()
-                                if tempProcess.terminationStatus == 0 {
-                                    objectFiles.append(modifiedObjPath)
-                                    print("   Created modified FuzzTest object file without LLVMFuzzerTestOneInput")
-                                } else {
-                                    // Fallback to original if modification fails
-                                    objectFiles.append(objPath)
-                                }
-                            } catch {
-                                // Fallback to original if modification fails
-                                objectFiles.append(objPath)
-                            }
-                        } else {
-                            objectFiles.append(objPath)
-                        }
+                        objectFiles.append(objPath)
                     }
                     break // Found object files for this dependency
                 }
@@ -638,13 +554,6 @@ struct SwiftFuzzer: AsyncParsableCommand {
         }
         
         // Build using direct Swift compiler invocation to completely bypass SwiftPM dependency logic
-        let fuzzTargetBuildDir = fuzzBuildPath.appending(component: buildConfig.dirname)
-        let outputDir = fuzzTargetBuildDir.appending(component: "\(target).build")
-        
-        // Ensure output directory exists
-        if !fileSystem.exists(outputDir) {
-            try fileSystem.createDirectory(outputDir, recursive: true)
-        }
         
         let modulesDir = fuzzTargetBuildDir.appending(component: "Modules")
         if !fileSystem.exists(modulesDir) {
@@ -701,11 +610,12 @@ struct SwiftFuzzer: AsyncParsableCommand {
         // Add module search paths for dependencies
         compileArgs.append(contentsOf: moduleSearchPaths)
         
-        // Add source files
-        compileArgs.append(contentsOf: sourceFiles)
+        // Add source files (including generated entrypoint if needed)
+        compileArgs.append(contentsOf: allSourceFiles)
         
         print("   Step 1: Compiling target source files to object files")
         print("   Using compiler: \(compileArgs[0])")
+        print("   Compile command: \(compileArgs.joined(separator: " "))")
         
         // Execute the compiler
         let compileProcess = Process()

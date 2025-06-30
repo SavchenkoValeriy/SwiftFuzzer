@@ -673,8 +673,9 @@ struct SwiftFuzzer: AsyncParsableCommand {
         print("   Found \(objectFiles.count) dependency object files to link")
         
         // Step 1: Compile target source files to object files
+        // Use swiftc from PATH (swiftly-managed) instead of Xcode toolchain to get fuzzer support
         var compileArgs = [
-            toolchain.swiftCompilerPath.pathString,
+            "swiftc",
             "-module-name", target,
             "-emit-module",
             "-emit-module-path", modulesDir.appending(component: "\(target).swiftmodule").pathString,
@@ -694,6 +695,9 @@ struct SwiftFuzzer: AsyncParsableCommand {
             compileArgs.append(contentsOf: ["-Onone", "-g"])
         }
         
+        // Add fuzzer instrumentation flags
+        compileArgs.append(contentsOf: ["-sanitize=fuzzer", "-parse-as-library"])
+        
         // Add module search paths for dependencies
         compileArgs.append(contentsOf: moduleSearchPaths)
         
@@ -701,12 +705,13 @@ struct SwiftFuzzer: AsyncParsableCommand {
         compileArgs.append(contentsOf: sourceFiles)
         
         print("   Step 1: Compiling target source files to object files")
+        print("   Using compiler: \(compileArgs[0])")
         
         // Execute the compiler
         let compileProcess = Process()
-        compileProcess.executableURL = URL(fileURLWithPath: compileArgs[0])
-        compileProcess.arguments = Array(compileArgs.dropFirst())
-        compileProcess.currentDirectoryURL = URL(fileURLWithPath: outputDir.pathString)
+        compileProcess.launchPath = "/usr/bin/env"
+        compileProcess.arguments = compileArgs
+        compileProcess.currentDirectoryPath = outputDir.pathString
         
         try compileProcess.run()
         compileProcess.waitUntilExit()
@@ -724,9 +729,10 @@ struct SwiftFuzzer: AsyncParsableCommand {
         
         // Step 3: Link all object files together
         var linkArgs = [
-            toolchain.swiftCompilerPath.pathString,
+            "swiftc",
             "-target", triple.tripleString,
             "-sdk", "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+            "-sanitize=fuzzer",  // Link with fuzzer runtime
             "-o", fuzzTargetBuildDir.appending(component: target).pathString
         ]
         
@@ -737,8 +743,8 @@ struct SwiftFuzzer: AsyncParsableCommand {
         linkArgs.append(contentsOf: objectFiles)
         
         let linkProcess = Process()
-        linkProcess.executableURL = URL(fileURLWithPath: linkArgs[0])
-        linkProcess.arguments = Array(linkArgs.dropFirst())
+        linkProcess.launchPath = "/usr/bin/env"
+        linkProcess.arguments = linkArgs
         
         try linkProcess.run()
         linkProcess.waitUntilExit()

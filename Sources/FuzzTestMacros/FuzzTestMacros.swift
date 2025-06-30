@@ -5,7 +5,7 @@ import SwiftDiagnostics
 import SwiftCompilerPlugin
 import Foundation
 
-/// Macro that registers a function for fuzzing and modifies the function to include registration
+/// Macro that registers a function for fuzzing and creates appropriate adapter
 public struct FuzzTestMacro: PeerMacro {
     public static func expansion(
         of node: AttributeSyntax,
@@ -21,24 +21,24 @@ public struct FuzzTestMacro: PeerMacro {
         // Get function name
         let funcName = funcDecl.name.text
         
-        // Validate function signature - should take Data parameter
-        guard let firstParam = funcDecl.signature.parameterClause.parameters.first else {
-            throw FuzzTestError.functionMustTakeDataParameter
-        }
-        
-        // Check if the parameter type contains "Data"
-        let paramTypeString = firstParam.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard paramTypeString.contains("Data") else {
-            throw FuzzTestError.functionMustTakeDataParameter
-        }
-        
         let className = "__FuzzTestRegistrator_\(funcName)"
+        
+        // Analyze function parameters to determine registration approach
+        let parameters = funcDecl.signature.parameterClause.parameters
+        
+        // Fuzz tests must have at least one parameter
+        guard !parameters.isEmpty else {
+            throw FuzzTestError.functionMustHaveParameters
+        }
+        
+        // All parameters must be either Data (backwards compatibility) or Fuzzable types
+        let registrationCode = "FuzzTestRegistry.register(name: \"\(funcName)\", adapter: FuzzerAdapter(\(funcName)))"
         
         let registrationClass = DeclSyntax("""
         @objc
         private class \(raw: className): NSObject {
             @objc static func register() {
-                FuzzTestRegistry.register(name: "\(raw: funcName)", function: \(raw: funcName))
+                \(raw: registrationCode)
             }
         }
         """);
@@ -49,14 +49,14 @@ public struct FuzzTestMacro: PeerMacro {
 
 enum FuzzTestError: Error, CustomStringConvertible {
     case onlyApplicableToFunction
-    case functionMustTakeDataParameter
+    case functionMustHaveParameters
     
     var description: String {
         switch self {
         case .onlyApplicableToFunction:
             return "@fuzzTest can only be applied to functions"
-        case .functionMustTakeDataParameter:
-            return "@fuzzTest functions must take a Data parameter as their first argument"
+        case .functionMustHaveParameters:
+            return "@fuzzTest functions must have at least one parameter"
         }
     }
 }
@@ -70,8 +70,8 @@ extension FuzzTestError: DiagnosticMessage {
         switch self {
         case .onlyApplicableToFunction:
             return MessageID(domain: "FuzzTestMacro", id: "onlyApplicableToFunction")
-        case .functionMustTakeDataParameter:
-            return MessageID(domain: "FuzzTestMacro", id: "functionMustTakeDataParameter")
+        case .functionMustHaveParameters:
+            return MessageID(domain: "FuzzTestMacro", id: "functionMustHaveParameters")
         }
     }
 }

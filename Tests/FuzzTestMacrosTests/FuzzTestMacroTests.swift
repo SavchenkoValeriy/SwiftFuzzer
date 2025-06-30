@@ -46,7 +46,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_parseData: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "parseData", function: parseData)
+                    FuzzTestRegistry.register(name: "parseData", adapter: FuzzerAdapter(parseData))
                 }
             }
             """
@@ -74,7 +74,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_processInput: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "processInput", function: processInput)
+                    FuzzTestRegistry.register(name: "processInput", adapter: FuzzerAdapter(processInput))
                 }
             }
             """
@@ -102,7 +102,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_handleOptionalData: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "handleOptionalData", function: handleOptionalData)
+                    FuzzTestRegistry.register(name: "handleOptionalData", adapter: FuzzerAdapter(handleOptionalData))
                 }
             }
             """
@@ -132,12 +132,40 @@ final class FuzzTestMacroTests: XCTestCase {
         #endif
     }
     
-    func testFuzzTestMacroFailsOnFunctionWithoutDataParameter() throws {
+    func testFuzzTestMacroWithFuzzableParameter() throws {
         #if canImport(FuzzTestMacros)
         assertMacro {
             """
             @fuzzTest
-            func invalidFunction(input: String) -> Bool {
+            func testWithString(input: String) -> Bool {
+                return true
+            }
+            """
+        } expansion: {
+            """
+            func testWithString(input: String) -> Bool {
+                return true
+            }
+
+            @objc
+            private class __FuzzTestRegistrator_testWithString: NSObject {
+                @objc static func register() {
+                    FuzzTestRegistry.register(name: "testWithString", adapter: FuzzerAdapter(testWithString))
+                }
+            }
+            """
+        }
+        #else
+        throw XCTSkip("macros are only supported when running tests for the host platform")
+        #endif
+    }
+    
+    func testFuzzTestMacroFailsOnNoParameters() throws {
+        #if canImport(FuzzTestMacros)
+        assertMacro {
+            """
+            @fuzzTest
+            func noParams() -> Bool {
                 return true
             }
             """
@@ -145,8 +173,8 @@ final class FuzzTestMacroTests: XCTestCase {
             """
             @fuzzTest
             ┬────────
-            ╰─ 🛑 @fuzzTest functions must take a Data parameter as their first argument
-            func invalidFunction(input: String) -> Bool {
+            ╰─ 🛑 @fuzzTest functions must have at least one parameter
+            func noParams() -> Bool {
                 return true
             }
             """
@@ -156,29 +184,6 @@ final class FuzzTestMacroTests: XCTestCase {
         #endif
     }
     
-    func testFuzzTestMacroFailsOnFunctionWithNoParameters() throws {
-        #if canImport(FuzzTestMacros)
-        assertMacro {
-            """
-            @fuzzTest
-            func noParametersFunction() -> Bool {
-                return true
-            }
-            """
-        } diagnostics: {
-            """
-            @fuzzTest
-            ┬────────
-            ╰─ 🛑 @fuzzTest functions must take a Data parameter as their first argument
-            func noParametersFunction() -> Bool {
-                return true
-            }
-            """
-        }
-        #else
-        throw XCTSkip("macros are only supported when running tests for the host platform")
-        #endif
-    }
     
     func testFuzzTestMacroWithComplexFunctionName() throws {
         #if canImport(FuzzTestMacros)
@@ -198,7 +203,63 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_parseJSONWithComplexValidation: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "parseJSONWithComplexValidation", function: parseJSONWithComplexValidation)
+                    FuzzTestRegistry.register(name: "parseJSONWithComplexValidation", adapter: FuzzerAdapter(parseJSONWithComplexValidation))
+                }
+            }
+            """
+        }
+        #else
+        throw XCTSkip("macros are only supported when running tests for the host platform")
+        #endif
+    }
+    
+    func testFuzzTestMacroWithMultipleParameters() throws {
+        #if canImport(FuzzTestMacros)
+        assertMacro {
+            """
+            @fuzzTest
+            func processMultiple(text: String, count: Int, flag: Bool) {
+                // Test function with multiple Fuzzable parameters
+            }
+            """
+        } expansion: {
+            """
+            func processMultiple(text: String, count: Int, flag: Bool) {
+                // Test function with multiple Fuzzable parameters
+            }
+
+            @objc
+            private class __FuzzTestRegistrator_processMultiple: NSObject {
+                @objc static func register() {
+                    FuzzTestRegistry.register(name: "processMultiple", adapter: FuzzerAdapter(processMultiple))
+                }
+            }
+            """
+        }
+        #else
+        throw XCTSkip("macros are only supported when running tests for the host platform")
+        #endif
+    }
+    
+    func testFuzzTestMacroWithManyParameters() throws {
+        #if canImport(FuzzTestMacros)
+        assertMacro {
+            """
+            @fuzzTest
+            func manyParams(a: String, b: Int, c: Bool, d: String, e: Int, f: Bool, g: String) {
+                // Test that we can handle many parameters with variadic generics
+            }
+            """
+        } expansion: {
+            """
+            func manyParams(a: String, b: Int, c: Bool, d: String, e: Int, f: Bool, g: String) {
+                // Test that we can handle many parameters with variadic generics
+            }
+
+            @objc
+            private class __FuzzTestRegistrator_manyParams: NSObject {
+                @objc static func register() {
+                    FuzzTestRegistry.register(name: "manyParams", adapter: FuzzerAdapter(manyParams))
                 }
             }
             """

@@ -74,18 +74,73 @@ public struct SimpleLibrary {
     }
 }
 
-// Fuzz test functions
-@fuzzTest  // Macro not available during subprocess swift build
+// Fuzz test functions using Data parameters (backwards compatibility)
+@fuzzTest
 public func fuzzProcessBuffer(_ data: Data) {
     _ = SimpleLibrary.processBuffer(data)
 }
 
-@fuzzTest  // Macro not available during subprocess swift build
+@fuzzTest
 public func fuzzCalculateSum(_ data: Data) {
     _ = SimpleLibrary.calculateSum(data)
 }
 
-@fuzzTest  // Macro not available during subprocess swift build  
+@fuzzTest
 public func fuzzParseStructuredData(_ data: Data) {
     _ = SimpleLibrary.parseStructuredData(data)
+}
+
+// New typed fuzz test functions demonstrating Fuzzable protocol
+@fuzzTest
+public func fuzzStringProcessing(_ input: String) {
+    // Test string processing with auto-generated strings
+    let data = Data(input.utf8)
+    _ = SimpleLibrary.processBuffer(data)
+}
+
+@fuzzTest
+public func fuzzIntegerOperations(_ value: Int) {
+    // Test integer operations with auto-generated integers
+    let data = Data([UInt8(abs(value) % 256)])
+    _ = SimpleLibrary.calculateSum(data)
+}
+
+@fuzzTest
+public func fuzzBooleanLogic(_ flag: Bool) {
+    // Test boolean-based logic
+    let data = Data([flag ? 1 : 0])
+    _ = SimpleLibrary.calculateSum(data)
+}
+
+@fuzzTest
+public func fuzzMultipleParameters(_ text: String, _ count: Int, _ enabled: Bool) {
+    // Test function with multiple typed parameters
+    guard !text.isEmpty && count >= 0 else { return }
+    
+    if enabled {
+        let repeatCount = min(count, 10) // Limit repetitions
+        var combined = ""
+        for _ in 0..<repeatCount {
+            combined += text
+        }
+        let data = Data(combined.utf8)
+        _ = SimpleLibrary.processBuffer(data)
+    }
+}
+
+@fuzzTest
+public func fuzzOptionalString(_ maybeText: String?) {
+    // Test optional parameter handling
+    guard let text = maybeText else { return }
+    let data = Data(text.utf8)
+    _ = SimpleLibrary.processBuffer(data)
+}
+
+@fuzzTest
+public func fuzzStringArray(_ strings: [String]) {
+    // Test array parameter handling
+    for string in strings {
+        let data = Data(string.utf8)
+        _ = SimpleLibrary.processBuffer(data)
+    }
 }

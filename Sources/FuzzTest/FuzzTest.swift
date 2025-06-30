@@ -5,7 +5,7 @@ public class FuzzTestRegistry: @unchecked Sendable {
     private static let singleton = FuzzTestRegistry()
 
     private var initialized = false
-    private var functions: [(String, (Data) -> Void)] = []
+    private var adapters: [(String, FuzzerAdapter)] = []
     
     public static func initialize() {
         guard !Self.singleton.initialized else { return }
@@ -39,49 +39,68 @@ public class FuzzTestRegistry: @unchecked Sendable {
         print("Found \(counter) classes among \(classCount)")
     }
     
-    /// Register a function for fuzzing
-    public static func register<T>(name: String, function: @escaping (Data) -> T) {
-        let wrapper: (Data) -> Void = { data in
-            _ = function(data)
-        }
-        Self.singleton.functions.append((name, wrapper))
+    /// Register a function for fuzzing using an adapter
+    public static func register(name: String, adapter: FuzzerAdapter) {
+        Self.singleton.adapters.append((name, adapter))
     }
     
-    /// Get all registered functions
+    /// Register a function for fuzzing (backwards compatibility)
+    public static func register<T>(name: String, function: @escaping (Data) -> T) {
+        let adapter = FuzzerAdapter { data in
+            _ = function(data)
+        }
+        Self.singleton.adapters.append((name, adapter))
+    }
+    
+    /// Get all registered adapters
+    public static func getAllAdapters() -> [(String, FuzzerAdapter)] {
+        return Self.singleton.adapters
+    }
+    
+    /// Get all registered functions (backwards compatibility)
     public static func getAllFunctions() -> [(String, (Data) -> Void)] {
-        return Self.singleton.functions
+        return Self.singleton.adapters.map { (name, adapter) in
+            (name, { data in
+                adapter.safeExecute(with: data)
+            })
+        }
     }
     
     /// Run all registered functions with the given data
     public static func runAll(with data: Data) {
-        for (_, function) in Self.singleton.functions {
-            function(data)
+        for (_, adapter) in Self.singleton.adapters {
+            adapter.safeExecute(with: data)
         }
     }
     
     /// Run a specific function by name
     public static func run(named: String, with data: Data) {
-        if let (_, function) = getAllFunctions().first(where: { $0.0 == named }) {
-            function(data)
+        if let (_, adapter) = Self.singleton.adapters.first(where: { $0.0 == named }) {
+            adapter.safeExecute(with: data)
         }
     }
     
     /// Reset the registry state - for testing purposes only
     public static func _resetForTesting() {
         Self.singleton.initialized = false
-        Self.singleton.functions.removeAll()
+        Self.singleton.adapters.removeAll()
     }
 }
 
 /// Marks a function for automatic fuzzing
-/// The function must take a Data parameter as its first argument
+/// The function can take Data or 1-5 parameters of types conforming to Fuzzable
 /// 
-/// Example:
+/// Examples:
 /// ```swift
 /// @fuzzTest
 /// func parseJSON(_ data: Data) -> Bool {
 ///     // Your vulnerable parsing code here
 ///     return true
+/// }
+/// 
+/// @fuzzTest
+/// func processString(_ input: String, _ count: Int) {
+///     // Fuzzer will generate String and Int from raw bytes
 /// }
 /// ```
 @attached(peer, names: prefixed(__FuzzTestRegistrator_))

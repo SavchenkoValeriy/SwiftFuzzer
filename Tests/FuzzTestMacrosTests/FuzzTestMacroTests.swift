@@ -46,7 +46,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_parseData: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "parseData", adapter: FuzzerAdapter(parseData))
+                    FuzzTestRegistry.register(fqn: "parseData(_:)", adapter: FuzzerAdapter(parseData))
                 }
             }
             """
@@ -74,7 +74,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_processInput: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "processInput", adapter: FuzzerAdapter(processInput))
+                    FuzzTestRegistry.register(fqn: "processInput(_:)", adapter: FuzzerAdapter(processInput))
                 }
             }
             """
@@ -102,7 +102,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_handleOptionalData: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "handleOptionalData", adapter: FuzzerAdapter(handleOptionalData))
+                    FuzzTestRegistry.register(fqn: "handleOptionalData(_:)", adapter: FuzzerAdapter(handleOptionalData))
                 }
             }
             """
@@ -150,7 +150,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_testWithString: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "testWithString", adapter: FuzzerAdapter(testWithString))
+                    FuzzTestRegistry.register(fqn: "testWithString(input:)", adapter: FuzzerAdapter(testWithString))
                 }
             }
             """
@@ -203,7 +203,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_parseJSONWithComplexValidation: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "parseJSONWithComplexValidation", adapter: FuzzerAdapter(parseJSONWithComplexValidation))
+                    FuzzTestRegistry.register(fqn: "parseJSONWithComplexValidation(_:)", adapter: FuzzerAdapter(parseJSONWithComplexValidation))
                 }
             }
             """
@@ -231,7 +231,7 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_processMultiple: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "processMultiple", adapter: FuzzerAdapter(processMultiple))
+                    FuzzTestRegistry.register(fqn: "processMultiple(text:count:flag:)", adapter: FuzzerAdapter(processMultiple))
                 }
             }
             """
@@ -259,7 +259,63 @@ final class FuzzTestMacroTests: XCTestCase {
             @objc
             private class __FuzzTestRegistrator_manyParams: NSObject {
                 @objc static func register() {
-                    FuzzTestRegistry.register(name: "manyParams", adapter: FuzzerAdapter(manyParams))
+                    FuzzTestRegistry.register(fqn: "manyParams(a:b:c:d:e:f:g:)", adapter: FuzzerAdapter(manyParams))
+                }
+            }
+            """
+        }
+        #else
+        throw XCTSkip("macros are only supported when running tests for the host platform")
+        #endif
+    }
+    
+    func testFuzzTestMacroWithParameterLabelsGeneratesFQN() throws {
+        #if canImport(FuzzTestMacros)
+        assertMacro {
+            """
+            @fuzzTest
+            func processData(input: String, maxLength: Int) {
+                // Process the data
+            }
+            """
+        } expansion: {
+            """
+            func processData(input: String, maxLength: Int) {
+                // Process the data
+            }
+            
+            @objc
+            private class __FuzzTestRegistrator_processData: NSObject {
+                @objc static func register() {
+                    FuzzTestRegistry.register(fqn: "processData(input:maxLength:)", adapter: FuzzerAdapter(processData))
+                }
+            }
+            """
+        }
+        #else
+        throw XCTSkip("macros are only supported when running tests for the host platform")
+        #endif
+    }
+    
+    func testFuzzTestMacroWithUnlabeledParametersGeneratesFQN() throws {
+        #if canImport(FuzzTestMacros)
+        assertMacro {
+            """
+            @fuzzTest
+            func parseBytes(_ data: Data, _ count: Int) {
+                // Parse bytes
+            }
+            """
+        } expansion: {
+            """
+            func parseBytes(_ data: Data, _ count: Int) {
+                // Parse bytes
+            }
+            
+            @objc
+            private class __FuzzTestRegistrator_parseBytes: NSObject {
+                @objc static func register() {
+                    FuzzTestRegistry.register(fqn: "parseBytes(_:_:)", adapter: FuzzerAdapter(parseBytes))
                 }
             }
             """

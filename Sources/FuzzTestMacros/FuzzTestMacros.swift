@@ -31,8 +31,18 @@ public struct FuzzTestMacro: PeerMacro {
             throw FuzzTestError.functionMustHaveParameters
         }
         
-        // All parameters must be either Data (backwards compatibility) or Fuzzable types
-        let registrationCode = "FuzzTestRegistry.register(name: \"\(funcName)\", adapter: FuzzerAdapter(\(funcName)))"
+        // Extract parameter labels for proper Swift FQN
+        let parameterSignatures = parameters.map { param in
+            // firstName is non-optional TokenSyntax, so access .text directly
+            let label = param.firstName.text
+            return "\(label):"
+        }
+        
+        // Create proper Swift FQN: functionName(label1:label2:...)
+        let fqn = "\(funcName)(\(parameterSignatures.joined(separator: "")))"
+        
+        // Generate registration code with FQN for hash-based dispatch
+        let registrationCode = "FuzzTestRegistry.register(fqn: \"\(fqn)\", adapter: FuzzerAdapter(\(funcName)))"
         
         let registrationClass = DeclSyntax("""
         @objc

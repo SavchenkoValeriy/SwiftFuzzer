@@ -552,7 +552,9 @@ public func LLVMFuzzerTestOneInput(_ data: UnsafePointer<UInt8>, _ size: Int) ->
     let testData = Data(bytes: data, count: size)
     
     FuzzTestRegistry.initialize()
-    FuzzTestRegistry.runAll(with: testData)
+    // Use hash-based dispatch for corpus stability
+    // First 4 bytes select function, remaining bytes are function input
+    FuzzTestRegistry.runSelected(with: testData)
     
     return 0
 }

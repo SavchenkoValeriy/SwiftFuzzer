@@ -45,7 +45,7 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
                      "Entrypoint should have LibFuzzer entry point")
         XCTAssertTrue(entrypointContent.contains("FuzzTestRegistry.initialize()"), 
                      "Entrypoint should initialize registry")
-        XCTAssertTrue(entrypointContent.contains("FuzzTestRegistry.runAll"), 
+        XCTAssertTrue(entrypointContent.contains("FuzzTestRegistry.runSelected"), 
                      "Entrypoint should run registered tests")
     }
     

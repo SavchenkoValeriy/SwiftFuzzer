@@ -293,4 +293,156 @@ final class FuzzTestRegistryTests: XCTestCase {
         XCTAssertTrue(process1Called)
         XCTAssertTrue(process2Called)
     }
+    
+    // MARK: - Crash Analysis Tests
+    
+    func testCrashAnalysisWithValidData() {
+        // Given - register a function and create crash data
+        var functionCalled = false
+        let testFunction: (String, Int) -> Void = { text, count in
+            functionCalled = true
+        }
+        
+        let fqn = "parseInput(text:count:)"
+        FuzzTestRegistry.register(fqn: fqn, adapter: FuzzerAdapter(testFunction))
+        
+        // Create crash data with function hash + function data
+        let hash = FuzzTestRegistry.getHashMappings().first { $0.1 == fqn }!.0
+        var crashData = Data()
+        withUnsafeBytes(of: hash) { bytes in
+            crashData.append(contentsOf: bytes)
+        }
+        crashData.append(contentsOf: [5, 104, 101, 108, 108, 111, 10, 0, 0, 0]) // "hello" + int
+        
+        // When
+        let report = FuzzTestRegistry.analyzeCrash(fromData: crashData)
+        
+        // Then
+        XCTAssertNotNil(report)
+        XCTAssertTrue(report!.contains("🚨 CRASH ANALYSIS REPORT 🚨"))
+        XCTAssertTrue(report!.contains("📍 Crashed Function: \(fqn)"))
+        XCTAssertTrue(report!.contains("🔄 Swift Reproduction Code:"))
+        XCTAssertTrue(report!.contains("parseInput("))
+    }
+    
+    func testCrashAnalysisWithInsufficientData() {
+        // Given - insufficient data (less than 4 bytes)
+        let crashData = Data([1, 2, 3])
+        
+        // When
+        let report = FuzzTestRegistry.analyzeCrash(fromData: crashData)
+        
+        // Then
+        XCTAssertNotNil(report)
+        XCTAssertTrue(report!.contains("❌ Invalid crash file: insufficient data"))
+    }
+    
+    func testCrashAnalysisWithUnknownFunction() {
+        // Given - crash data with unknown function hash
+        let unknownHash: UInt32 = 0xDEADBEEF
+        var crashData = Data()
+        withUnsafeBytes(of: unknownHash) { bytes in
+            crashData.append(contentsOf: bytes)
+        }
+        crashData.append(contentsOf: [1, 2, 3, 4])
+        
+        // When - with no registered functions
+        let report = FuzzTestRegistry.analyzeCrash(fromData: crashData)
+        
+        // Then
+        XCTAssertNotNil(report)
+        XCTAssertTrue(report!.contains("❌ No fuzz test functions registered"))
+    }
+    
+    func testCrashAnalysisWithGracefulDegradation() {
+        // Given - register a function and create crash data with different hash
+        let testFunction: (Data) -> Void = { _ in }
+        FuzzTestRegistry.register(fqn: "testFunction(data:)", adapter: FuzzerAdapter(testFunction))
+        
+        // Create crash data with unknown hash
+        let unknownHash: UInt32 = 0x99999999
+        var crashData = Data()
+        withUnsafeBytes(of: unknownHash) { bytes in
+            crashData.append(contentsOf: bytes)
+        }
+        crashData.append(contentsOf: [1, 2, 3, 4])
+        
+        // When
+        let report = FuzzTestRegistry.analyzeCrash(fromData: crashData)
+        
+        // Then - should gracefully degrade to nearest function
+        XCTAssertNotNil(report)
+        XCTAssertTrue(report!.contains("🚨 CRASH ANALYSIS REPORT 🚨"))
+        XCTAssertTrue(report!.contains("⚠️  Note: Exact function not found (graceful degradation)"))
+        XCTAssertTrue(report!.contains("🎯 Original Selector:"))
+        XCTAssertTrue(report!.contains("🔄 Mapped to Nearest:"))
+    }
+    
+    func testCreateReproductionTest() {
+        // Given - register a function and create crash data
+        let testFunction: (String) -> Void = { _ in }
+        let fqn = "validateInput(text:)"
+        FuzzTestRegistry.register(fqn: fqn, adapter: FuzzerAdapter(testFunction))
+        
+        let hash = FuzzTestRegistry.getHashMappings().first { $0.1 == fqn }!.0
+        var crashData = Data()
+        withUnsafeBytes(of: hash) { bytes in
+            crashData.append(contentsOf: bytes)
+        }
+        crashData.append(contentsOf: [5, 104, 101, 108, 108, 111]) // "hello"
+        
+        // When
+        let tempFile = "/tmp/test_reproduction.swift"
+        let success = FuzzTestRegistry.createReproductionTest(
+            crashData: crashData,
+            outputPath: tempFile,
+            testFunctionName: "testMyReproduction"
+        )
+        
+        // Then
+        XCTAssertTrue(success)
+        
+        // Verify file contents
+        if let fileContents = try? String(contentsOfFile: tempFile) {
+            XCTAssertTrue(fileContents.contains("func testMyReproduction()"))
+            XCTAssertTrue(fileContents.contains("validateInput("))
+            XCTAssertTrue(fileContents.contains("// Function: \(fqn)"))
+            XCTAssertTrue(fileContents.contains("// Hash: 0x"))
+        }
+        
+        // Cleanup
+        try? FileManager.default.removeItem(atPath: tempFile)
+    }
+    
+    func testCrashInfoStorage() {
+        // Given - register a function (crash analysis is always enabled)
+        
+        var functionCalled = false
+        let testFunction: (String) -> Void = { _ in 
+            functionCalled = true
+        }
+        
+        let fqn = "processText(input:)"
+        FuzzTestRegistry.register(fqn: fqn, adapter: FuzzerAdapter(testFunction))
+        
+        let hash = FuzzTestRegistry.getHashMappings().first { $0.1 == fqn }!.0
+        var testData = Data()
+        withUnsafeBytes(of: hash) { bytes in
+            testData.append(contentsOf: bytes)
+        }
+        testData.append(contentsOf: [5, 119, 111, 114, 108, 100]) // "world"
+        
+        // When
+        FuzzTestRegistry.runSelected(with: testData)
+        
+        // Then
+        XCTAssertTrue(functionCalled)
+        
+        let crashInfo = FuzzTestRegistry.getLastCrashInfo()
+        XCTAssertNotNil(crashInfo)
+        XCTAssertEqual(crashInfo?.functionFQN, fqn)
+        XCTAssertEqual(crashInfo?.functionHash, hash)
+        XCTAssertEqual(crashInfo?.rawInput, testData)
+        XCTAssertTrue(crashInfo?.swiftReproductionCode.contains("processText(") == true)
+    }
 }

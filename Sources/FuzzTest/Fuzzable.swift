@@ -13,6 +13,20 @@ public protocol Fuzzable {
     /// Optional hint for the expected size in bytes for better fuzzing efficiency
     /// Return nil for variable-size types
     static var fuzzableSizeHint: Int? { get }
+    
+    /// Generate a human-readable debug description for crash reporting
+    /// - Parameter value: The value to describe
+    /// - Returns: A Swift-syntax string representation of the value
+    static func debugDescription(for value: Self) -> String
+}
+
+// MARK: - Default Implementation
+
+extension Fuzzable {
+    /// Default debug description implementation using String interpolation
+    public static func debugDescription(for value: Self) -> String {
+        return "\(value)"
+    }
 }
 
 /// Errors that can occur during fuzzable value construction
@@ -62,6 +76,15 @@ extension String: Fuzzable {
     }
     
     public static var fuzzableSizeHint: Int? { nil } // Variable size
+    
+    public static func debugDescription(for value: String) -> String {
+        // Escape quotes and represent as string literal
+        let escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
+                          .replacingOccurrences(of: "\"", with: "\\\"")
+                          .replacingOccurrences(of: "\n", with: "\\n")
+                          .replacingOccurrences(of: "\t", with: "\\t")
+        return "\"\(escaped)\""
+    }
 }
 
 extension Bool: Fuzzable {
@@ -76,6 +99,7 @@ extension Bool: Fuzzable {
     }
     
     public static var fuzzableSizeHint: Int? { 1 }
+    
 }
 
 extension Int: Fuzzable {
@@ -96,6 +120,7 @@ extension Int: Fuzzable {
     }
     
     public static var fuzzableSizeHint: Int? { MemoryLayout<Int>.size }
+    
 }
 
 // MARK: - Signed Integer Extensions
@@ -112,6 +137,7 @@ extension Int8: Fuzzable {
     }
     
     public static var fuzzableSizeHint: Int? { 1 }
+    
 }
 
 extension Int16: Fuzzable {

@@ -2,6 +2,7 @@
 import ArgumentParser
 import Foundation
 import SwiftFuzzerLib
+import FuzzTest
 
 @main
 struct SwiftFuzzer: AsyncParsableCommand {

@@ -171,14 +171,22 @@ public struct SwiftFuzzerCore {
         // Always build dependencies in regular .build directory to ensure they're up-to-date
         // This is necessary because source files might have changed since last build
         print("\n🏗️  Step 1: Building dependencies in regular .build directory...")
-        try await buildDependencies(
-            packagePath: packagePath,
-            target: options.target,
-            buildConfig: buildConfig,
-            graph: graph,
-            observability: observability,
-            fileSystem: fileSystem
-        )
+        print("   This step ensures all dependencies are built before we create the fuzz target")
+        print("   If this hangs, try running 'swift build' manually in your project first")
+        
+        do {
+            try await buildDependencies(
+                packagePath: packagePath,
+                target: options.target,
+                buildConfig: buildConfig,
+                graph: graph,
+                observability: observability,
+                fileSystem: fileSystem
+            )
+        } catch {
+            print("   ❌ Step 1 failed: \(error)")
+            throw error
+        }
         
         // Step 2: Link pre-built dependencies to fuzz directory
         print("\n🔗 Step 2: Linking dependencies to fuzz build...")
@@ -234,34 +242,36 @@ public struct SwiftFuzzerCore {
         fileSystem: any FileSystem
     ) async throws {
         print("   Building all dependencies with regular swift build subprocess...")
+        print("   Working directory: \(packagePath.pathString)")
+        print("   Configuration: \(buildConfig.dirname)")
         
         // Use subprocess swift build which is more reliable than internal BuildOperation
         let buildProcess = Process()
-        buildProcess.launchPath = "/usr/bin/env"
+        buildProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         buildProcess.arguments = [
             "swift", "build", 
-            "-c", buildConfig.dirname,
-            "--package-path", packagePath.pathString
+            "-c", buildConfig.dirname
         ]
+        buildProcess.currentDirectoryPath = packagePath.pathString
         
-        let pipe = Pipe()
-        buildProcess.standardOutput = pipe
-        buildProcess.standardError = pipe
+        print("   Command: swift build -c \(buildConfig.dirname)")
+        print("   Starting build process...")
+        
+        // Use the simplest possible subprocess approach
+        buildProcess.standardOutput = nil
+        buildProcess.standardError = nil
         
         try buildProcess.run()
         buildProcess.waitUntilExit()
         
-        // Read and print the output
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8), !output.isEmpty {
-            print(output)
+        let exitCode = buildProcess.terminationStatus
+        print("   Build process completed with exit code: \(exitCode)")
+        
+        guard exitCode == 0 else {
+            throw StringError("Dependencies build failed with exit code: \(exitCode)")
         }
         
-        guard buildProcess.terminationStatus == 0 else {
-            throw StringError("Dependencies build failed with exit code: \(buildProcess.terminationStatus)")
-        }
-        
-        print("   Dependencies build completed!")
+        print("   Dependencies build completed successfully!")
     }
     
     // Link pre-built dependencies to fuzz build directory
@@ -547,16 +557,80 @@ public struct SwiftFuzzerCore {
 import Foundation
 import FuzzTest
 
+// Signal handler for crash analysis
+func crashSignalHandler(signal: Int32) {
+    print("\\n🚨 FATAL ERROR DETECTED 🚨")
+    print("Signal: \\(signal)")
+    
+    // Get crash analysis from the registry
+    if let crashInfo = FuzzTestRegistry.getLastCrashInfo() {
+        print("\\n📍 Crashed Function: \\(crashInfo.functionFQN)")
+        print("🔢 Function Hash: 0x\\(String(crashInfo.functionHash, radix: 16, uppercase: true))")
+        print("📊 Input: \\(crashInfo.rawInput.count) bytes")
+        print("🔄 Reproduction Code:")
+        print("```swift")
+        print("\\(crashInfo.swiftReproductionCode)")
+        print("```")
+        print("📋 Arguments: \\(crashInfo.decodedArguments.joined(separator: ", "))")
+        print("💾 Raw Input: \\(crashInfo.rawInput.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " "))")
+    } else {
+        print("❌ No crash analysis available")
+    }
+    
+    print("\\n💡 To reproduce: Copy the Swift code above into a test function")
+    exit(signal)
+}
+
 @_cdecl("LLVMFuzzerTestOneInput")
 public func LLVMFuzzerTestOneInput(_ data: UnsafePointer<UInt8>, _ size: Int) -> Int32 {
+    // Install signal handlers for crash analysis
+    signal(SIGABRT, crashSignalHandler)
+    signal(SIGSEGV, crashSignalHandler)
+    signal(SIGBUS, crashSignalHandler)
+    signal(SIGFPE, crashSignalHandler)
+    signal(SIGILL, crashSignalHandler)
+    
     let testData = Data(bytes: data, count: size)
     
     FuzzTestRegistry.initialize()
+    
     // Use hash-based dispatch for corpus stability
     // First 4 bytes select function, remaining bytes are function input
     FuzzTestRegistry.runSelected(with: testData)
     
     return 0
+}
+
+@_cdecl("LLVMFuzzerCustomCrossOver")
+public func LLVMFuzzerCustomCrossOver(
+    _ data1: UnsafePointer<UInt8>, _ size1: Int,
+    _ data2: UnsafePointer<UInt8>, _ size2: Int,
+    _ out: UnsafeMutablePointer<UInt8>, _ maxOutSize: Int,
+    _ seed: UInt32
+) -> Int {
+    // Simple crossover: interleave bytes from both inputs
+    guard maxOutSize > 0 else { return 0 }
+    
+    var outOffset = 0
+    let maxSize = min(maxOutSize, max(size1, size2))
+    
+    for i in 0..<maxSize {
+        let useByte1 = ((seed + UInt32(i)) % 2) == 0
+        if useByte1 && i < size1 {
+            out[outOffset] = data1[i]
+        } else if !useByte1 && i < size2 {
+            out[outOffset] = data2[i]
+        } else if i < size1 {
+            out[outOffset] = data1[i]
+        } else if i < size2 {
+            out[outOffset] = data2[i]
+        } else {
+            break
+        }
+        outOffset += 1
+    }
+    
+    return outOffset
 }
 """
         try fileSystem.writeFileContents(fuzzerEntrypointPath, string: fuzzerEntrypointContent)
@@ -727,7 +801,13 @@ public func LLVMFuzzerTestOneInput(_ data: UnsafePointer<UInt8>, _ size: Int) ->
             print("   Created corpus directory: \(corpusPath.pathString)")
         }
         
-        // Build fuzzer arguments
+        // Create crash analysis directory
+        let crashPath = packagePath.appending(component: "crash")
+        if !fileSystem.exists(crashPath) {
+            try fileSystem.createDirectory(crashPath, recursive: true)
+        }
+        
+        // Build fuzzer arguments with crash artifact handling
         var fuzzerArgs: [String] = []
         
         // Add time limit if specified
@@ -740,33 +820,188 @@ public func LLVMFuzzerTestOneInput(_ data: UnsafePointer<UInt8>, _ size: Int) ->
             fuzzerArgs.append(contentsOf: ["-runs=\(runCount)"])
         }
         
+        // Add crash artifact path
+        fuzzerArgs.append(contentsOf: ["-artifact_prefix=\(crashPath.pathString)/"])
+        
         // Add corpus directory
         fuzzerArgs.append(corpusPath.pathString)
         
         print("   Fuzzer executable: \(executablePath.pathString)")
         print("   Corpus directory: \(corpusPath.pathString)")
+        print("   Crash artifacts: \(crashPath.pathString)")
         print("   Fuzzer arguments: \(fuzzerArgs.joined(separator: " "))")
+        
+        // Create pipes to capture output
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
         
         // Run the fuzzer
         let fuzzerProcess = Process()
         fuzzerProcess.executableURL = URL(fileURLWithPath: executablePath.pathString)
         fuzzerProcess.arguments = fuzzerArgs
         fuzzerProcess.currentDirectoryPath = packagePath.pathString
-        
-        // Connect stdout/stderr so we can see fuzzer output
-        fuzzerProcess.standardOutput = FileHandle.standardOutput
-        fuzzerProcess.standardError = FileHandle.standardError
+        fuzzerProcess.standardOutput = outputPipe
+        fuzzerProcess.standardError = errorPipe
         
         print("\n🔍 Starting libFuzzer (Press Ctrl+C to stop)...")
+        print("📊 Monitoring for crashes and providing instant analysis...")
+        
+        // Start monitoring output in background
+        let outputData = outputPipe.fileHandleForReading
+        let errorData = errorPipe.fileHandleForReading
+        
+        Task {
+            do {
+                for try await line in outputData.bytes.lines {
+                    print(line)
+                    // Forward output while monitoring for crashes
+                    if line.contains("CRASHED") || line.contains("AddressSanitizer") || line.contains("ERROR") {
+                        await handleCrashDetected(crashPath: crashPath, packagePath: packagePath)
+                    }
+                }
+            } catch {
+                print("Error reading fuzzer output: \(error)")
+            }
+        }
+        
+        Task {
+            do {
+                for try await line in errorData.bytes.lines {
+                    fputs("\(line)\n", stderr)
+                }
+            } catch {
+                print("Error reading fuzzer error output: \(error)")
+            }
+        }
         
         try fuzzerProcess.run()
         fuzzerProcess.waitUntilExit()
         
         let exitCode = fuzzerProcess.terminationStatus
+        
+        // Check for crash artifacts and analyze them
         if exitCode != 0 {
-            print("\n🐛 Fuzzer found issues (exit code: \(exitCode))")
+            print("\n🐛 Fuzzer detected issues (exit code: \(exitCode))")
+            await analyzeCrashArtifacts(crashPath: crashPath, packagePath: packagePath)
         } else {
-            print("\n✅ Fuzzer completed successfully")
+            print("\n✅ Fuzzer completed successfully - no crashes found!")
+        }
+    }
+    
+    // Handle real-time crash detection
+    static func handleCrashDetected(crashPath: Basics.AbsolutePath, packagePath: Basics.AbsolutePath) async {
+        print("\n🚨 CRASH DETECTED! Preparing analysis...")
+    }
+    
+    // Analyze crash artifacts and provide user-friendly reports
+    static func analyzeCrashArtifacts(crashPath: Basics.AbsolutePath, packagePath: Basics.AbsolutePath) async {
+        let fileSystem = Basics.localFileSystem
+        
+        print("\n🔍 Analyzing crash artifacts...")
+        
+        // First check for our enhanced crash analysis file
+        let crashAnalysisPath = "/tmp/swift_fuzzer_crash_analysis.txt"
+        if let analysisAbsPath = try? Basics.AbsolutePath(validating: crashAnalysisPath),
+           fileSystem.exists(analysisAbsPath) {
+            do {
+                let analysisContent = try String(contentsOfFile: crashAnalysisPath, encoding: .utf8)
+                print(analysisContent)
+                // Clean up the file after displaying
+                try fileSystem.removeFileTree(analysisAbsPath)
+                return
+            } catch {
+                print("   Error reading crash analysis file: \(error)")
+            }
+        }
+        
+        do {
+            let crashFiles = try fileSystem.getDirectoryContents(crashPath)
+                .filter { $0.hasPrefix("crash-") || $0.hasPrefix("leak-") || $0.hasPrefix("timeout-") }
+                .sorted()
+            
+            if crashFiles.isEmpty {
+                print("   No crash artifacts found in \(crashPath.pathString)")
+                print("   ⚠️  This might be a Swift fatal error - check console output above for details")
+                return
+            }
+            
+            print("   Found \(crashFiles.count) crash artifact(s):")
+            
+            for (index, crashFile) in crashFiles.enumerated() {
+                let crashFilePath = crashPath.appending(component: crashFile)
+                print("   📄 \(crashFile)")
+                
+                // Analyze the crash file
+                if let crashData = try? fileSystem.readFileContents(crashFilePath) {
+                    await analyzeSingleCrash(
+                        crashData: Data(crashData.contents),
+                        crashFileName: crashFile,
+                        index: index + 1,
+                        packagePath: packagePath
+                    )
+                }
+            }
+            
+            // Provide actionable next steps
+            print("""
+            
+            💡 Next Steps:
+            1. The crashes have been automatically analyzed above
+            2. Look for the Swift reproduction code to understand what failed
+            3. Add the reproduction code to your test suite to prevent regressions
+            4. Fix the underlying issue and re-run the fuzzer
+            
+            🔧 To reproduce crashes manually:
+               Add the shown Swift code to a test function and run your tests
+            
+            """)
+            
+        } catch {
+            print("   Error analyzing crash artifacts: \(error)")
+        }
+    }
+    
+    // Analyze a single crash file and provide detailed report
+    static func analyzeSingleCrash(
+        crashData: Data,
+        crashFileName: String,
+        index: Int,
+        packagePath: Basics.AbsolutePath
+    ) async {
+        print("\n" + String(repeating: "=", count: 60))
+        print("   🚨 CRASH #\(index): \(crashFileName)")
+        print(String(repeating: "=", count: 60))
+        
+        // Use the crash analysis system we built
+        if let report = FuzzTestRegistry.analyzeCrash(fromData: crashData) {
+            print(report)
+        } else {
+            // Fallback analysis for unrecognized crash data
+            print("""
+            ❌ Could not parse crash data format
+            
+            📊 Raw crash data:
+            • Size: \(crashData.count) bytes
+            • Hex: \(crashData.prefix(64).map { String(format: "%02X", $0) }.joined(separator: " "))\(crashData.count > 64 ? "..." : "")
+            
+            💡 This might be a crash format not yet supported by SwiftFuzzer's analysis.
+            You can still use this data to reproduce the crash manually.
+            """)
+        }
+        
+        // Create reproduction test file automatically
+        let reproductionPath = packagePath.appending(component: "crash").appending(component: "CrashReproduction\(index).swift")
+        if FuzzTestRegistry.createReproductionTest(
+            crashData: crashData,
+            outputPath: reproductionPath.pathString,
+            testFunctionName: "testCrash\(index)Reproduction"
+        ) {
+            print("""
+            
+            ✅ Auto-generated reproduction test at:
+               \(reproductionPath.pathString)
+            
+            """)
         }
     }
 }

@@ -155,10 +155,10 @@ public struct SwiftFuzzerCore {
         
         // Validate that the target exists
         let targetExists = graph.allModules.contains { $0.name == options.target }
-        guard targetExists else {
+        if !targetExists {
             let availableTargets = graph.allModules.map { $0.name }
             let error = UserFriendlyError.targetNotFound(options.target, availableTargets: availableTargets)
-            UserInterface.reportError(error)
+            try UserInterface.reportError(error)
         }
         
         UserInterface.showSuccess("Target '\(options.target)' found")
@@ -181,7 +181,7 @@ public struct SwiftFuzzerCore {
         } catch {
             let details = "\(error)"
             let friendlyError = UserFriendlyError.compilationFailed(details)
-            UserInterface.reportError(friendlyError)
+            try UserInterface.reportError(friendlyError)
         }
         
         UserInterface.showSuccess("Dependencies built successfully")
@@ -264,12 +264,12 @@ public struct SwiftFuzzerCore {
         
         let exitCode = buildProcess.terminationStatus
         
-        guard exitCode == 0 else {
+        if exitCode != 0 {
             // Get error output for better reporting
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
             let friendlyError = UserFriendlyError.compilationFailed(errorOutput)
-            UserInterface.reportError(friendlyError)  
+            try UserInterface.reportError(friendlyError)  
         }
     }
     
@@ -730,9 +730,9 @@ public func LLVMFuzzerCustomCrossOver(
         try compileProcess.run()
         compileProcess.waitUntilExit()
         
-        guard compileProcess.terminationStatus == 0 else {
+        if compileProcess.terminationStatus != 0 {
             let friendlyError = UserFriendlyError.compilationFailed("Swift compiler failed with exit code: \(compileProcess.terminationStatus)")
-            UserInterface.reportError(friendlyError)
+            try UserInterface.reportError(friendlyError)
         }
         
         compileProgress += 1
@@ -768,9 +768,9 @@ public func LLVMFuzzerCustomCrossOver(
         try linkProcess.run()
         linkProcess.waitUntilExit()
         
-        guard linkProcess.terminationStatus == 0 else {
+        if linkProcess.terminationStatus != 0 {
             let friendlyError = UserFriendlyError.compilationFailed("Swift linker failed with exit code: \(linkProcess.terminationStatus)")
-            UserInterface.reportError(friendlyError)
+            try UserInterface.reportError(friendlyError)
         }
     }
     
@@ -784,7 +784,7 @@ public func LLVMFuzzerCustomCrossOver(
         let fileSystem = Basics.localFileSystem
         
         // Ensure the executable exists
-        guard fileSystem.exists(executablePath) else {
+        if !fileSystem.exists(executablePath) {
             let error = UserFriendlyError(
                 title: "Fuzzer executable not found",
                 description: "The compiled fuzzer executable is missing.",
@@ -804,7 +804,7 @@ public func LLVMFuzzerCustomCrossOver(
                     "find . -name '\(options.target)' -type f"
                 ]
             )
-            UserInterface.reportError(error)
+            try UserInterface.reportError(error)
         }
         
         // Create corpus directory if specified or use default

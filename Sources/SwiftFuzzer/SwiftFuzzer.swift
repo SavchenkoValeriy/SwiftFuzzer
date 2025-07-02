@@ -73,7 +73,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
                     "swift build --show-bin-path"
                 ]
             )
-            UserInterface.reportError(friendlyError)
+            try UserInterface.reportError(friendlyError)
         } catch {
             // Handle any other unexpected errors
             let friendlyError = UserFriendlyError(
@@ -95,7 +95,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
                     "swift --version  # Check Swift version"
                 ]
             )
-            UserInterface.reportError(friendlyError)
+            try UserInterface.reportError(friendlyError)
         }
     }
 }

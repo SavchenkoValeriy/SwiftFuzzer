@@ -36,7 +36,7 @@ public struct UserInterface {
     
     // MARK: - Error Reporting
     
-    public static func reportError(_ error: UserFriendlyError) -> Never {
+    public static func reportError(_ error: UserFriendlyError) throws {
         print("\n❌ \(error.title)")
         print(String(repeating: "═", count: error.title.count + 3))
         
@@ -71,7 +71,8 @@ public struct UserInterface {
         
         print("")
         
-        exit(1)
+        // Create a StringError for backwards compatibility with tests
+        throw StringError(error.title)
     }
     
     public static func reportWarning(_ warning: UserFriendlyWarning) {
@@ -127,13 +128,13 @@ public struct UserInterface {
         
         if !missingTools.isEmpty {
             let error = UserFriendlyError.missingTools(missingTools)
-            reportError(error)
+            try reportError(error)
         }
         
         // Check Swift version
         if let version = getSwiftVersion(), !isSwiftVersionSupported(version) {
             let error = UserFriendlyError.unsupportedSwiftVersion(version)
-            reportError(error)
+            try reportError(error)
         }
     }
     

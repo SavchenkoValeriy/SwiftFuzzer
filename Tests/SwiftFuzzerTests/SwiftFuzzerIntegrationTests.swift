@@ -7,7 +7,7 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
     
     func testSimpleLibraryBuildOnly() async throws {
         // Given
-        let testFilePath = try AbsolutePath(validating: #filePath)
+        let testFilePath = try TSCBasic.AbsolutePath(validating: #filePath)
         let testProjectPath = testFilePath
             .parentDirectory  // SwiftFuzzerTests
             .appending(components: "IntegrationTests", "TestProjects", "SimpleLibrary")
@@ -26,21 +26,21 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
         // Verify fuzzer executable exists and is executable
         let expectedExecutable = testProjectPath
             .appending(components: ".fuzz", ".build", "debug", "SimpleLibrary")
-        XCTAssertTrue(localFileSystem.exists(expectedExecutable), 
+        XCTAssertTrue(TSCBasic.localFileSystem.exists(expectedExecutable), 
                      "Fuzzer executable should exist at \(expectedExecutable)")
         
         // Verify the executable exists and has proper file size (indicating successful build)
-        let fileAttributes = try localFileSystem.getFileInfo(expectedExecutable)
+        let fileAttributes = try TSCBasic.localFileSystem.getFileInfo(expectedExecutable)
         XCTAssertGreaterThan(fileAttributes.size, 0, 
                            "Fuzzer executable should have non-zero size")
         
         // Verify fuzzer entrypoint was generated with proper structure
         let entrypointFile = testProjectPath
             .appending(components: ".fuzz", ".build", "debug", "SimpleLibrary.build", "FuzzerEntrypoint.swift")
-        XCTAssertTrue(localFileSystem.exists(entrypointFile), 
+        XCTAssertTrue(TSCBasic.localFileSystem.exists(entrypointFile), 
                      "Fuzzer entrypoint should exist at \(entrypointFile)")
         
-        let entrypointContent = try localFileSystem.readFileContents(entrypointFile).description
+        let entrypointContent = try TSCBasic.localFileSystem.readFileContents(entrypointFile).description
         XCTAssertTrue(entrypointContent.contains("@_cdecl(\"LLVMFuzzerTestOneInput\")"), 
                      "Entrypoint should have LibFuzzer entry point")
         XCTAssertTrue(entrypointContent.contains("FuzzTestRegistry.initialize()"), 
@@ -51,7 +51,7 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
     
     func testSimpleLibraryBuildAndRunWithTimeLimit() async throws {
         // Given
-        let testFilePath = try AbsolutePath(validating: #filePath)
+        let testFilePath = try TSCBasic.AbsolutePath(validating: #filePath)
         let testProjectPath = testFilePath
             .parentDirectory
             .appending(components: "IntegrationTests", "TestProjects", "SimpleLibrary")
@@ -75,13 +75,13 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
         
         // Verify that the fuzzer actually ran by checking it created its working directory
         let fuzzDir = testProjectPath.appending(component: ".fuzz")
-        XCTAssertTrue(localFileSystem.exists(fuzzDir),
+        XCTAssertTrue(TSCBasic.localFileSystem.exists(fuzzDir),
                      "Fuzzer should have created its working directory")
     }
     
     func testFuzzTestRegistryPopulation() async throws {
         // Given
-        let testFilePath = try AbsolutePath(validating: #filePath)
+        let testFilePath = try TSCBasic.AbsolutePath(validating: #filePath)
         let testProjectPath = testFilePath
             .parentDirectory
             .appending(components: "IntegrationTests", "TestProjects", "SimpleLibrary")
@@ -100,20 +100,20 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
         let buildDir = testProjectPath.appending(components: ".fuzz", ".build", "debug")
         
         // Check that build artifacts exist (indicating macro expansion worked)
-        let buildArtifacts = try localFileSystem.getDirectoryContents(buildDir)
+        let buildArtifacts = try TSCBasic.localFileSystem.getDirectoryContents(buildDir)
         XCTAssertTrue(buildArtifacts.contains("SimpleLibrary"), 
                      "Fuzzer executable should exist in build directory")
         
         // Verify that the build process succeeded without macro expansion errors
         // If macros failed to expand, the build would have failed
         let executable = buildDir.appending(component: "SimpleLibrary")
-        XCTAssertTrue(localFileSystem.exists(executable),
+        XCTAssertTrue(TSCBasic.localFileSystem.exists(executable),
                      "Successful build indicates macro expansion worked correctly")
     }
     
     func testInvalidTargetShowsError() async throws {
         // Given
-        let testFilePath = try AbsolutePath(validating: #filePath)
+        let testFilePath = try TSCBasic.AbsolutePath(validating: #filePath)
         let testProjectPath = testFilePath
             .parentDirectory
             .appending(components: "IntegrationTests", "TestProjects", "SimpleLibrary")
@@ -137,7 +137,7 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
     
     func testBuildShowsAvailableTargets() async throws {
         // Given
-        let testFilePath = try AbsolutePath(validating: #filePath)
+        let testFilePath = try TSCBasic.AbsolutePath(validating: #filePath)
         let testProjectPath = testFilePath
             .parentDirectory
             .appending(components: "IntegrationTests", "TestProjects", "SimpleLibrary")

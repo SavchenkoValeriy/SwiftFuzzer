@@ -329,12 +329,13 @@ public struct UserFriendlyError {
             title: "Swift version \(version) is not supported",
             description: "SwiftFuzzer requires Swift 5.9 or later for libFuzzer support.",
             possibleCauses: [
-                "Using older Swift version",
-                "Using Xcode toolchain instead of swiftly"
+                "Using older Swift version that lacks libFuzzer support",
+                "Using Xcode toolchain instead of swiftly",
+                "Swift installation missing required fuzzer components"
             ],
             solutions: [
                 "Install Swift 5.9+ using swiftly",
-                "Switch to supported Swift toolchain"
+                "Use supported Swift toolchain with fuzzer capabilities"
             ],
             example: "swiftly install 5.9-release",
             relatedCommands: [
@@ -355,7 +356,7 @@ public struct UserFriendlyError {
             ],
             solutions: [
                 "Add @fuzzTest to functions you want to test",
-                "Import FuzzTest in files with fuzz tests",
+                "Add FuzzTest import in files with fuzz tests",
                 "Make fuzz test functions public"
             ],
             example: "import FuzzTest\n\n@fuzzTest\npublic func testMyCode(_ data: Data) {\n    // Test implementation\n}",

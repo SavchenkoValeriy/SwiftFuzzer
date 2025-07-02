@@ -1,19 +1,20 @@
-// swift-tools-version: 6.1
+// swift-tools-version: 5.9
 import PackageDescription
 import CompilerPluginSupport
 
 let package = Package(
     name: "SwiftFuzzer",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v13)],
     products: [
         .executable(name: "swift-fuzz", targets: ["SwiftFuzzer"]),
         .library(name: "FuzzTest", targets: ["FuzzTest"]),
         .library(name: "SwiftFuzzerLib", targets: ["SwiftFuzzerLib"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-package-manager.git", branch: "main"),
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0"),
-        .package(url: "https://github.com/pointfreeco/swift-macro-testing.git", from: "0.2.0")
+        .package(url: "https://github.com/apple/swift-package-manager.git", revision: "swift-6.1.1-RELEASE"),
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "509.0.0"),
+        .package(url: "https://github.com/pointfreeco/swift-macro-testing.git", from: "0.2.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.0.0")
     ],
     targets: [
         .target(
@@ -26,7 +27,8 @@ let package = Package(
         .executableTarget(
             name: "SwiftFuzzer",
             dependencies: [
-                "SwiftFuzzerLib"
+                "SwiftFuzzerLib",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
         ),
         .target(

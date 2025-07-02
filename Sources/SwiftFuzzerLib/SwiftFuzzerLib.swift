@@ -486,7 +486,6 @@ public struct SwiftFuzzerCore {
             flags: BuildFlags(
                 swiftCompilerFlags: moduleSearchPaths
             ),
-            buildSystemKind: .native,
             workers: UInt32(ProcessInfo.processInfo.activeProcessorCount),
             sanitizers: EnabledSanitizers()
         )
@@ -498,7 +497,6 @@ public struct SwiftFuzzerCore {
             toolchain: toolchain,
             triple: triple,
             flags: BuildFlags(),
-            buildSystemKind: .native,
             workers: UInt32(ProcessInfo.processInfo.activeProcessorCount),
             sanitizers: EnabledSanitizers()
         )

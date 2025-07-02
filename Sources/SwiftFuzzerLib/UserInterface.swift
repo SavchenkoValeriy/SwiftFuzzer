@@ -373,17 +373,37 @@ public struct UserFriendlyWarning {
 }
 
 public struct CrashReport {
-    let functionName: String
-    let functionHash: UInt64
-    let inputSize: Int
-    let crashType: CrashType
-    let reproductionCode: String
-    let rawInputHex: String
-    let suggestedFixes: [String]
-    let artifactPath: String
+    public let functionName: String
+    public let functionHash: UInt64
+    public let inputSize: Int
+    public let crashType: CrashType
+    public let reproductionCode: String
+    public let rawInputHex: String
+    public let suggestedFixes: [String]
+    public let artifactPath: String
+    
+    public init(
+        functionName: String,
+        functionHash: UInt64,
+        inputSize: Int,
+        crashType: CrashType,
+        reproductionCode: String,
+        rawInputHex: String,
+        suggestedFixes: [String],
+        artifactPath: String
+    ) {
+        self.functionName = functionName
+        self.functionHash = functionHash
+        self.inputSize = inputSize
+        self.crashType = crashType
+        self.reproductionCode = reproductionCode
+        self.rawInputHex = rawInputHex
+        self.suggestedFixes = suggestedFixes
+        self.artifactPath = artifactPath
+    }
 }
 
-public enum CrashType: CustomStringConvertible {
+public enum CrashType: CustomStringConvertible, Equatable {
     case bufferOverflow
     case nullPointerDereference
     case integerOverflow

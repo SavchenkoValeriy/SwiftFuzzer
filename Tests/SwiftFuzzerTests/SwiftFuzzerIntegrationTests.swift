@@ -158,4 +158,50 @@ final class SwiftFuzzerIntegrationTests: XCTestCase {
             XCTAssertTrue(error.message.contains("Target 'WrongTarget' not found"))
         }
     }
+    
+    func testExecutableTargetShowsNotSupportedError() async throws {
+        // Given - executable target (CLI app)
+        let testFilePath = try TSCBasic.AbsolutePath(validating: #filePath)
+        let testProjectPath = testFilePath
+            .parentDirectory
+            .appending(components: "IntegrationTests", "TestProjects", "ExecutableApp")
+        
+        // When - try to fuzz executable target
+        let options = SwiftFuzzerOptions(
+            packagePath: testProjectPath.pathString,
+            configuration: "debug", 
+            target: "ExecutableApp",
+            buildOnly: true
+        )
+        
+        // Then - should show clear error about executable targets not being supported
+        do {
+            try await SwiftFuzzerCore.run(options: options)
+            XCTFail("Should throw error for executable target")
+        } catch let error as SwiftFuzzerLib.StringError {
+            XCTAssertTrue(error.message.contains("Executable targets not yet supported"),
+                         "Should show specific error for executable targets")
+        }
+    }
+    
+    
+    func testAsyncFuzzTestLimitations() async throws {
+        // This test documents that async @fuzzTest functions are not currently supported
+        // TODO: This should be updated when async support is added to FuzzTestMacros
+        
+        // The limitation is that FuzzTestMacros generates:
+        // FuzzTestRegistry.register(fqn: "...", adapter: FuzzerAdapter(asyncFunction))
+        // But FuzzerAdapter expects synchronous functions, not async ones.
+        //
+        // The compilation error would be:
+        // "cannot pass function of type '@Sendable (Data) async -> ()' 
+        //  to parameter expecting synchronous function type"
+        //
+        // When async support is added, the macro should generate something like:
+        // FuzzTestRegistry.register(fqn: "...", adapter: AsyncFuzzerAdapter(asyncFunction))
+        // or wrap the async function in a synchronous adapter that runs it with runBlocking
+        
+        // For now, this test serves as documentation of the limitation
+        XCTAssertTrue(true, "Async @fuzzTest functions not yet supported - see FuzzTestMacros")
+    }
 }

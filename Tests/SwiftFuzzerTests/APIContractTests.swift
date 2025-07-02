@@ -85,7 +85,7 @@ final class APIContractTests: XCTestCase {
     }
     
     func testUserInterfaceErrorReportingContract() {
-        let error = UserFriendlyError.targetNotFound("TestTarget", availableTargets: ["RealTarget"])
+        let error = DiagnosticError.targetNotFound("TestTarget", availableTargets: ["RealTarget"])
         
         // Error reporting should throw StringError for backward compatibility
         XCTAssertThrowsError(try UserInterface.reportError(error)) { thrownError in
@@ -97,7 +97,7 @@ final class APIContractTests: XCTestCase {
     }
     
     func testUserInterfaceWarningReportingContract() {
-        let warning = UserFriendlyWarning(title: "Test Warning", message: "Test message", suggestion: "Test suggestion")
+        let warning = DiagnosticWarning(title: "Test Warning", message: "Test message", suggestion: "Test suggestion")
         
         // Warning reporting should not throw
         XCTAssertNoThrow({
@@ -198,16 +198,16 @@ final class APIContractTests: XCTestCase {
         }
     }
     
-    // MARK: - UserFriendlyError API Contract Tests
+    // MARK: - DiagnosticError API Contract Tests
     
-    func testUserFriendlyErrorStructureContract() {
-        // Test that all UserFriendlyError factory methods produce well-formed errors
-        let errors: [(String, UserFriendlyError)] = [
-            ("targetNotFound", UserFriendlyError.targetNotFound("Target", availableTargets: ["A", "B"])),
-            ("compilationFailed", UserFriendlyError.compilationFailed("Error details")),
-            ("missingTools", UserFriendlyError.missingTools(["tool1", "tool2"])),
-            ("unsupportedSwiftVersion", UserFriendlyError.unsupportedSwiftVersion("5.8.0")),
-            ("noFuzzTests", UserFriendlyError.noFuzzTests())
+    func testDiagnosticErrorStructureContract() {
+        // Test that all DiagnosticError factory methods produce well-formed errors
+        let errors: [(String, DiagnosticError)] = [
+            ("targetNotFound", DiagnosticError.targetNotFound("Target", availableTargets: ["A", "B"])),
+            ("compilationFailed", DiagnosticError.compilationFailed("Error details")),
+            ("missingTools", DiagnosticError.missingTools(["tool1", "tool2"])),
+            ("unsupportedSwiftVersion", DiagnosticError.unsupportedSwiftVersion("5.8.0")),
+            ("noFuzzTests", DiagnosticError.noFuzzTests())
         ]
         
         for (errorType, error) in errors {
@@ -233,9 +233,9 @@ final class APIContractTests: XCTestCase {
         }
     }
     
-    func testUserFriendlyErrorCustomInitializationContract() {
-        // Test custom UserFriendlyError initialization
-        let customError = UserFriendlyError(
+    func testDiagnosticErrorCustomInitializationContract() {
+        // Test custom DiagnosticError initialization
+        let customError = DiagnosticError(
             title: "Custom Error",
             description: "Custom description.",
             possibleCauses: ["Cause 1", "Cause 2"],

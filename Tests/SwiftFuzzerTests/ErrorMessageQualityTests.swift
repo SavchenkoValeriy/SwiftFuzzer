@@ -184,7 +184,7 @@ final class ErrorMessageQualityTests: XCTestCase {
     
     func testTargetNotFoundErrorSpecificity() {
         let availableTargets = ["ValidTarget1", "ValidTarget2", "LibraryTarget"]
-        let error = UserFriendlyError.targetNotFound("InvalidTarget", availableTargets: availableTargets)
+        let error = DiagnosticError.targetNotFound("InvalidTarget", availableTargets: availableTargets)
         
         // Should mention the specific target that wasn't found
         XCTAssertTrue(error.title.contains("InvalidTarget"))
@@ -201,7 +201,7 @@ final class ErrorMessageQualityTests: XCTestCase {
     
     func testCompilationErrorSpecificity() {
         let errorDetails = "File.swift:42: error: use of undeclared identifier 'foo'"
-        let error = UserFriendlyError.compilationFailed(errorDetails)
+        let error = DiagnosticError.compilationFailed(errorDetails)
         
         // Should provide specific guidance for common compilation issues
         XCTAssertTrue(error.possibleCauses.contains { $0.contains("Syntax errors") })
@@ -216,7 +216,7 @@ final class ErrorMessageQualityTests: XCTestCase {
     
     func testSwiftVersionErrorSpecificity() {
         let version = "5.8.1"
-        let error = UserFriendlyError.unsupportedSwiftVersion(version)
+        let error = DiagnosticError.unsupportedSwiftVersion(version)
         
         // Should mention specific version
         XCTAssertTrue(error.title.contains(version))
@@ -231,7 +231,7 @@ final class ErrorMessageQualityTests: XCTestCase {
     
     func testMissingToolsErrorSpecificity() {
         let tools = ["swift", "clang", "ld"]
-        let error = UserFriendlyError.missingTools(tools)
+        let error = DiagnosticError.missingTools(tools)
         
         // Should mention specific tools
         let allToolsMentioned = tools.allSatisfy { tool in
@@ -299,13 +299,13 @@ final class ErrorMessageQualityTests: XCTestCase {
     
     // MARK: - Helper Methods
     
-    private func createAllErrorTypes() -> [(String, UserFriendlyError)] {
+    private func createAllErrorTypes() -> [(String, DiagnosticError)] {
         return [
-            ("targetNotFound", UserFriendlyError.targetNotFound("TestTarget", availableTargets: ["RealTarget1", "RealTarget2"])),
-            ("compilationFailed", UserFriendlyError.compilationFailed("Swift compilation error details")),
-            ("missingTools", UserFriendlyError.missingTools(["swift", "clang"])),
-            ("unsupportedSwiftVersion", UserFriendlyError.unsupportedSwiftVersion("5.8.0")),
-            ("noFuzzTests", UserFriendlyError.noFuzzTests())
+            ("targetNotFound", DiagnosticError.targetNotFound("TestTarget", availableTargets: ["RealTarget1", "RealTarget2"])),
+            ("compilationFailed", DiagnosticError.compilationFailed("Swift compilation error details")),
+            ("missingTools", DiagnosticError.missingTools(["swift", "clang"])),
+            ("unsupportedSwiftVersion", DiagnosticError.unsupportedSwiftVersion("5.8.0")),
+            ("noFuzzTests", DiagnosticError.noFuzzTests())
         ]
     }
 }

@@ -54,7 +54,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
             try await SwiftFuzzerCore.run(options: options)
         } catch let error as StringError {
             // Legacy error handling - convert to user-friendly format
-            let friendlyError = UserFriendlyError(
+            let friendlyError = DiagnosticError(
                 title: "SwiftFuzzer operation failed",
                 description: error.message,
                 possibleCauses: [
@@ -76,7 +76,7 @@ struct SwiftFuzzer: AsyncParsableCommand {
             try UserInterface.reportError(friendlyError)
         } catch {
             // Handle any other unexpected errors
-            let friendlyError = UserFriendlyError(
+            let friendlyError = DiagnosticError(
                 title: "Unexpected error occurred",
                 description: "SwiftFuzzer encountered an unexpected error: \(error)",
                 possibleCauses: [

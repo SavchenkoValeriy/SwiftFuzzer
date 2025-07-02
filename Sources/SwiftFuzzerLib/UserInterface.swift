@@ -36,7 +36,7 @@ public struct UserInterface {
     
     // MARK: - Error Reporting
     
-    public static func reportError(_ error: UserFriendlyError) throws {
+    public static func reportError(_ error: DiagnosticError) throws {
         print("\n❌ \(error.title)")
         print(String(repeating: "═", count: error.title.count + 3))
         
@@ -75,7 +75,7 @@ public struct UserInterface {
         throw StringError(error.title)
     }
     
-    public static func reportWarning(_ warning: UserFriendlyWarning) {
+    public static func reportWarning(_ warning: DiagnosticWarning) {
         print("\n⚠️  \(warning.title)")
         print("   \(warning.message)")
         if let suggestion = warning.suggestion {
@@ -127,13 +127,13 @@ public struct UserInterface {
         }
         
         if !missingTools.isEmpty {
-            let error = UserFriendlyError.missingTools(missingTools)
+            let error = DiagnosticError.missingTools(missingTools)
             try reportError(error)
         }
         
         // Check Swift version
         if let version = getSwiftVersion(), !isSwiftVersionSupported(version) {
-            let error = UserFriendlyError.unsupportedSwiftVersion(version)
+            let error = DiagnosticError.unsupportedSwiftVersion(version)
             try reportError(error)
         }
     }
@@ -231,7 +231,7 @@ public enum Phase {
     }
 }
 
-public struct UserFriendlyError {
+public struct DiagnosticError {
     public let title: String
     public let description: String
     public let possibleCauses: [String]
@@ -256,8 +256,8 @@ public struct UserFriendlyError {
     }
     
     // Common error factories
-    public static func targetNotFound(_ target: String, availableTargets: [String]) -> UserFriendlyError {
-        return UserFriendlyError(
+    public static func targetNotFound(_ target: String, availableTargets: [String]) -> DiagnosticError {
+        return DiagnosticError(
             title: "Target '\(target)' not found",
             description: "The specified target doesn't exist in your Swift package.",
             possibleCauses: [
@@ -278,8 +278,8 @@ public struct UserFriendlyError {
         )
     }
     
-    public static func compilationFailed(_ details: String) -> UserFriendlyError {
-        return UserFriendlyError(
+    public static func compilationFailed(_ details: String) -> DiagnosticError {
+        return DiagnosticError(
             title: "Swift compilation failed",
             description: "Your Swift code couldn't be compiled with fuzzer instrumentation.",
             possibleCauses: [
@@ -302,8 +302,8 @@ public struct UserFriendlyError {
         )
     }
     
-    public static func missingTools(_ tools: [String]) -> UserFriendlyError {
-        return UserFriendlyError(
+    public static func missingTools(_ tools: [String]) -> DiagnosticError {
+        return DiagnosticError(
             title: "Required development tools missing",
             description: "SwiftFuzzer needs additional tools that aren't available on your system.",
             possibleCauses: [
@@ -324,8 +324,8 @@ public struct UserFriendlyError {
         )
     }
     
-    public static func unsupportedSwiftVersion(_ version: String) -> UserFriendlyError {
-        return UserFriendlyError(
+    public static func unsupportedSwiftVersion(_ version: String) -> DiagnosticError {
+        return DiagnosticError(
             title: "Swift version \(version) is not supported",
             description: "SwiftFuzzer requires Swift 5.9 or later for libFuzzer support.",
             possibleCauses: [
@@ -345,8 +345,8 @@ public struct UserFriendlyError {
         )
     }
     
-    public static func noFuzzTests() -> UserFriendlyError {
-        return UserFriendlyError(
+    public static func noFuzzTests() -> DiagnosticError {
+        return DiagnosticError(
             title: "No fuzz tests found in target",
             description: "Your target doesn't contain any functions marked with @fuzzTest.",
             possibleCauses: [
@@ -367,7 +367,7 @@ public struct UserFriendlyError {
     }
 }
 
-public struct UserFriendlyWarning {
+public struct DiagnosticWarning {
     let title: String
     let message: String
     let suggestion: String?

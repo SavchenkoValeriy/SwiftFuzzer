@@ -14,10 +14,10 @@ final class UserInterfaceTests: XCTestCase {
         UserInterface.showProgress(3, 5, "Testing progress")
     }
     
-    func testUserFriendlyErrors() {
+    func testDiagnosticErrors() {
         // Test error creation and formatting
         let availableTargets = ["LibraryTarget", "TestTarget"]
-        let targetNotFoundError = UserFriendlyError.targetNotFound("WrongTarget", availableTargets: availableTargets)
+        let targetNotFoundError = DiagnosticError.targetNotFound("WrongTarget", availableTargets: availableTargets)
         
         XCTAssertEqual(targetNotFoundError.title, "Target 'WrongTarget' not found")
         XCTAssertTrue(targetNotFoundError.description.contains("doesn't exist"))
@@ -27,7 +27,7 @@ final class UserInterfaceTests: XCTestCase {
     }
     
     func testCompilationErrorHandling() {
-        let compilationError = UserFriendlyError.compilationFailed("Swift compiler exited with code 1")
+        let compilationError = DiagnosticError.compilationFailed("Swift compiler exited with code 1")
         
         XCTAssertEqual(compilationError.title, "Swift compilation failed")
         XCTAssertTrue(compilationError.description.contains("couldn't be compiled"))
@@ -36,7 +36,7 @@ final class UserInterfaceTests: XCTestCase {
     }
     
     func testMissingToolsError() {
-        let missingToolsError = UserFriendlyError.missingTools(["swift", "clang"])
+        let missingToolsError = DiagnosticError.missingTools(["swift", "clang"])
         
         XCTAssertEqual(missingToolsError.title, "Required development tools missing")
         XCTAssertTrue(missingToolsError.description.contains("aren't available"))
@@ -44,7 +44,7 @@ final class UserInterfaceTests: XCTestCase {
     }
     
     func testUnsupportedSwiftVersionError() {
-        let versionError = UserFriendlyError.unsupportedSwiftVersion("5.8.0")
+        let versionError = DiagnosticError.unsupportedSwiftVersion("5.8.0")
         
         XCTAssertTrue(versionError.title.contains("5.8.0"))
         XCTAssertTrue(versionError.description.contains("5.9 or later"))
@@ -52,7 +52,7 @@ final class UserInterfaceTests: XCTestCase {
     }
     
     func testNoFuzzTestsError() {
-        let noFuzzTestsError = UserFriendlyError.noFuzzTests()
+        let noFuzzTestsError = DiagnosticError.noFuzzTests()
         
         XCTAssertEqual(noFuzzTestsError.title, "No fuzz tests found in target")
         XCTAssertTrue(noFuzzTestsError.description.contains("@fuzzTest"))
@@ -61,7 +61,7 @@ final class UserInterfaceTests: XCTestCase {
     }
     
     func testWarningReporting() {
-        let warning = UserFriendlyWarning(
+        let warning = DiagnosticWarning(
             title: "Test Warning",
             message: "This is a test warning",
             suggestion: "Consider this suggestion"
@@ -122,7 +122,7 @@ final class UserInterfaceTests: XCTestCase {
         // We can't easily test the actual validation without mocking the environment,
         // but we can ensure the error types are properly configured
         let missingTools = ["nonexistent-tool"]
-        let toolError = UserFriendlyError.missingTools(missingTools)
+        let toolError = DiagnosticError.missingTools(missingTools)
         
         XCTAssertTrue(toolError.relatedCommands.contains { $0.contains("xcode-select") })
         XCTAssertTrue(toolError.solutions.contains { $0.contains("nonexistent-tool") })

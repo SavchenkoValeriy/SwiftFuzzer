@@ -157,7 +157,7 @@ public struct SwiftFuzzerCore {
         let targetExists = graph.allModules.contains { $0.name == options.target }
         if !targetExists {
             let availableTargets = graph.allModules.map { $0.name }
-            let error = UserFriendlyError.targetNotFound(options.target, availableTargets: availableTargets)
+            let error = DiagnosticError.targetNotFound(options.target, availableTargets: availableTargets)
             try UserInterface.reportError(error)
         }
         
@@ -180,7 +180,7 @@ public struct SwiftFuzzerCore {
             )
         } catch {
             let details = "\(error)"
-            let friendlyError = UserFriendlyError.compilationFailed(details)
+            let friendlyError = DiagnosticError.compilationFailed(details)
             try UserInterface.reportError(friendlyError)
         }
         
@@ -268,7 +268,7 @@ public struct SwiftFuzzerCore {
             // Get error output for better reporting
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-            let friendlyError = UserFriendlyError.compilationFailed(errorOutput)
+            let friendlyError = DiagnosticError.compilationFailed(errorOutput)
             try UserInterface.reportError(friendlyError)  
         }
     }
@@ -521,6 +521,37 @@ public struct SwiftFuzzerCore {
         
         // Get target's source files
         let sourceTargetModule = graph.allModules.first { $0.name == target }!
+        
+        // Check if target is executable - not supported yet
+        if sourceTargetModule.type == .executable {
+            let error = DiagnosticError(
+                title: "Executable targets not yet supported",
+                description: "SwiftFuzzer currently only supports library targets with @fuzzTest functions.",
+                possibleCauses: [
+                    "Target is defined as executableTarget() in Package.swift",
+                    "Target contains main execution code that conflicts with fuzzer entry point",
+                    "Fuzzer compilation uses -parse-as-library which prevents top-level expressions"
+                ],
+                solutions: [
+                    "Create a separate library target with your core logic and @fuzzTest functions",
+                    "Move @fuzzTest functions to a library target that your executable depends on",
+                    "Use .target() instead of .executableTarget() if you don't need main execution"
+                ],
+                example: """
+// In Package.swift:
+.library(name: "MyLibrary", targets: ["MyLibrary"]),
+.executableTarget(name: "MyApp", dependencies: ["MyLibrary"]),
+
+// Move @fuzzTest functions to MyLibrary target
+""",
+                relatedCommands: [
+                    "swift package describe --type json | jq '.targets[] | select(.name==\"\\(target)\") | .type'",
+                    "Check target type in Package.swift"
+                ]
+            )
+            try UserInterface.reportError(error)
+        }
+        
         let sourceFiles = sourceTargetModule.sources.paths.map { $0.pathString }
         
         UserInterface.showStep("Compiling \(sourceFiles.count) source files")
@@ -731,7 +762,7 @@ public func LLVMFuzzerCustomCrossOver(
         compileProcess.waitUntilExit()
         
         if compileProcess.terminationStatus != 0 {
-            let friendlyError = UserFriendlyError.compilationFailed("Swift compiler failed with exit code: \(compileProcess.terminationStatus)")
+            let friendlyError = DiagnosticError.compilationFailed("Swift compiler failed with exit code: \(compileProcess.terminationStatus)")
             try UserInterface.reportError(friendlyError)
         }
         
@@ -769,7 +800,7 @@ public func LLVMFuzzerCustomCrossOver(
         linkProcess.waitUntilExit()
         
         if linkProcess.terminationStatus != 0 {
-            let friendlyError = UserFriendlyError.compilationFailed("Swift linker failed with exit code: \(linkProcess.terminationStatus)")
+            let friendlyError = DiagnosticError.compilationFailed("Swift linker failed with exit code: \(linkProcess.terminationStatus)")
             try UserInterface.reportError(friendlyError)
         }
     }
@@ -785,7 +816,7 @@ public func LLVMFuzzerCustomCrossOver(
         
         // Ensure the executable exists
         if !fileSystem.exists(executablePath) {
-            let error = UserFriendlyError(
+            let error = DiagnosticError(
                 title: "Fuzzer executable not found",
                 description: "The compiled fuzzer executable is missing.",
                 possibleCauses: [
@@ -941,7 +972,7 @@ public func LLVMFuzzerCustomCrossOver(
             
             if crashFiles.isEmpty {
                 UserInterface.showStep("No crash artifacts found in \(crashPath.pathString)", isSubStep: true)
-                UserInterface.reportWarning(UserFriendlyWarning(
+                UserInterface.reportWarning(DiagnosticWarning(
                     title: "No crash artifacts generated",
                     message: "This might be a Swift fatal error or runtime issue.",
                     suggestion: "Check the console output above for error details."

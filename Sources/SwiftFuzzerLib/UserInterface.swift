@@ -91,7 +91,6 @@ public struct UserInterface {
         print(String(repeating: "🚨", count: 10))
         
         print("\n📍 Function: \(crash.functionName)")
-        print("🔢 Hash: 0x\(String(crash.functionHash, radix: 16, uppercase: true))")
         print("📊 Input size: \(crash.inputSize) bytes")
         print("⚡ Crash type: \(crash.crashType.description)")
         
@@ -375,7 +374,6 @@ public struct DiagnosticWarning {
 
 public struct CrashReport {
     public let functionName: String
-    public let functionHash: UInt64
     public let inputSize: Int
     public let crashType: CrashType
     public let reproductionCode: String
@@ -385,7 +383,6 @@ public struct CrashReport {
     
     public init(
         functionName: String,
-        functionHash: UInt64,
         inputSize: Int,
         crashType: CrashType,
         reproductionCode: String,
@@ -394,7 +391,6 @@ public struct CrashReport {
         artifactPath: String
     ) {
         self.functionName = functionName
-        self.functionHash = functionHash
         self.inputSize = inputSize
         self.crashType = crashType
         self.reproductionCode = reproductionCode

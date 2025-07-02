@@ -593,7 +593,6 @@ func crashSignalHandler(signal: Int32) {
     // Get crash analysis from the registry
     if let crashInfo = FuzzTestRegistry.getLastCrashInfo() {
         print("\\n📍 Crashed Function: \\(crashInfo.functionFQN)")
-        print("🔢 Function Hash: 0x\\(String(crashInfo.functionHash, radix: 16, uppercase: true))")
         print("📊 Input: \\(crashInfo.rawInput.count) bytes")
         print("🔄 Reproduction Code:")
         print("```swift")
@@ -627,38 +626,6 @@ public func LLVMFuzzerTestOneInput(_ data: UnsafePointer<UInt8>, _ size: Int) ->
     FuzzTestRegistry.runSelected(with: testData)
     
     return 0
-}
-
-@_cdecl("LLVMFuzzerCustomCrossOver")
-public func LLVMFuzzerCustomCrossOver(
-    _ data1: UnsafePointer<UInt8>, _ size1: Int,
-    _ data2: UnsafePointer<UInt8>, _ size2: Int,
-    _ out: UnsafeMutablePointer<UInt8>, _ maxOutSize: Int,
-    _ seed: UInt32
-) -> Int {
-    // Simple crossover: interleave bytes from both inputs
-    guard maxOutSize > 0 else { return 0 }
-    
-    var outOffset = 0
-    let maxSize = min(maxOutSize, max(size1, size2))
-    
-    for i in 0..<maxSize {
-        let useByte1 = ((seed + UInt32(i)) % 2) == 0
-        if useByte1 && i < size1 {
-            out[outOffset] = data1[i]
-        } else if !useByte1 && i < size2 {
-            out[outOffset] = data2[i]
-        } else if i < size1 {
-            out[outOffset] = data1[i]
-        } else if i < size2 {
-            out[outOffset] = data2[i]
-        } else {
-            break
-        }
-        outOffset += 1
-    }
-    
-    return outOffset
 }
 """
         try fileSystem.writeFileContents(fuzzerEntrypointPath, string: fuzzerEntrypointContent)
@@ -1028,7 +995,6 @@ public func LLVMFuzzerCustomCrossOver(
             // Parse the report and make it more user-friendly
             let crash = CrashReport(
                 functionName: extractFunctionName(from: report) ?? "Unknown",
-                functionHash: extractFunctionHash(from: report) ?? 0,
                 inputSize: crashData.count,
                 crashType: extractCrashType(from: report),
                 reproductionCode: extractReproductionCode(from: report) ?? "// Unable to generate reproduction code",
@@ -1041,7 +1007,6 @@ public func LLVMFuzzerCustomCrossOver(
             // Fallback analysis for unrecognized crash data
             let crash = CrashReport(
                 functionName: "Unknown",
-                functionHash: 0,
                 inputSize: crashData.count,
                 crashType: .unknown("Unrecognized crash format"),
                 reproductionCode: "// Raw crash data - manual analysis required",
@@ -1074,20 +1039,6 @@ public func LLVMFuzzerCustomCrossOver(
         for line in lines {
             if line.contains("Function:") {
                 return line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces)
-            }
-        }
-        return nil
-    }
-    
-    private static func extractFunctionHash(from report: String) -> UInt64? {
-        // Parse function hash from crash analysis report
-        let lines = report.components(separatedBy: .newlines)
-        for line in lines {
-            if line.contains("Hash:") {
-                let hashString = line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces)
-                if let hashString = hashString?.replacingOccurrences(of: "0x", with: "") {
-                    return UInt64(hashString, radix: 16)
-                }
             }
         }
         return nil

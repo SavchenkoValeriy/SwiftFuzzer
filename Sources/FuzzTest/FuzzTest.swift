@@ -57,15 +57,12 @@ public class FuzzTestRegistry: @unchecked Sendable {
         
         classCount = objc_getClassList(AutoreleasingUnsafeMutablePointer(classes), classCount)
         
-        var counter = 0
-        
         for i in 0..<Int(classCount) {
             guard let cls: AnyClass = classes[i] else { continue }
             let className = String(cString: class_getName(cls))
             // Look for classes with our prefix
             if className.contains("__FuzzTestRegistrator_") {
                 // Call the register method on this class
-                counter += 1
                 if let objcCls = cls as? NSObject.Type {
                     if objcCls.responds(to: Selector(("register"))) {
                         objcCls.perform(Selector(("register")))
@@ -76,8 +73,6 @@ public class FuzzTestRegistry: @unchecked Sendable {
         
         // Sort hashes for binary search
         Self.singleton.sortedHashes = Array(Self.singleton.hashToFunction.keys).sorted()
-        
-        print("Found \(counter) classes among \(classCount)")
     }
     
     /// Register a function for fuzzing using FQN (Fully Qualified Name) for proper overload handling

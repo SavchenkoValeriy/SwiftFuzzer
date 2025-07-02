@@ -1,4 +1,3 @@
-// Sources/SwiftFuzzerLib/SwiftFuzzerLib.swift
 import Foundation
 import Basics
 import PackageModel
@@ -89,21 +88,21 @@ public struct SwiftFuzzerOptions {
 public struct SwiftFuzzerCore {
     
     public static func run(options: SwiftFuzzerOptions) async throws {
-        print("Building package at: \(options.packagePath)")
+        UserInterface.showPhaseStart(.setup)
+        UserInterface.showStep("Package: \(options.packagePath)")
+        UserInterface.showStep("Target: \(options.target)")
+        UserInterface.showStep("Configuration: \(options.configuration)")
         
         let packagePath = try Basics.AbsolutePath(validating: options.packagePath)
         let buildConfig = options.configuration == "release" ? BuildConfiguration.release : BuildConfiguration.debug
         
-        print("Configuration: \(buildConfig.dirname)")
-        print("Package path: \(packagePath)")
-        
         // Create observability system that prints diagnostics
         let observability = ObservabilitySystem { scope, diagnostic in
-            let diagnosticLevel = diagnostic.severity == .error ? "ERROR" : 
-                                 diagnostic.severity == .warning ? "WARNING" : "INFO"
-            print("[\(diagnosticLevel)] \(diagnostic.description)")
-            if let metadata = diagnostic.metadata {
-                print("  Metadata: \(String(describing: metadata))")
+            // Only show errors and warnings to users, hide internal INFO messages
+            if diagnostic.severity == .error {
+                UserInterface.showStep("❌ \(diagnostic.description)", isSubStep: true)
+            } else if diagnostic.severity == .warning {
+                UserInterface.showStep("⚠️  \(diagnostic.description)", isSubStep: true)
             }
         }
         let fileSystem = Basics.localFileSystem
@@ -150,29 +149,25 @@ public struct SwiftFuzzerCore {
             observabilityScope: observability.topScope
         )
         
-        print("Package loaded with \(graph.allModules.count) modules")
-        for module in graph.allModules {
-            print("Module: \(module.name) (type: \(module.type))")
-        }
+        
+        UserInterface.showPhaseStart(.validation)
+        UserInterface.showStep("Checking target '\(options.target)' exists")
         
         // Validate that the target exists
         let targetExists = graph.allModules.contains { $0.name == options.target }
         guard targetExists else {
-            print("\nError: Target '\(options.target)' not found in package.")
-            print("Available targets:")
-            for module in graph.allModules {
-                print("  - \(module.name) (type: \(module.type))")
-            }
-            throw StringError("Target '\(options.target)' not found")
+            let availableTargets = graph.allModules.map { $0.name }
+            let error = UserFriendlyError.targetNotFound(options.target, availableTargets: availableTargets)
+            UserInterface.reportError(error)
         }
         
-        print("\nBuilding target: \(options.target) with fuzz instrumentation")
+        UserInterface.showSuccess("Target '\(options.target)' found")
         
         // Always build dependencies in regular .build directory to ensure they're up-to-date
         // This is necessary because source files might have changed since last build
-        print("\n🏗️  Step 1: Building dependencies in regular .build directory...")
-        print("   This step ensures all dependencies are built before we create the fuzz target")
-        print("   If this hangs, try running 'swift build' manually in your project first")
+        UserInterface.showPhaseStart(.buildingDependencies)
+        UserInterface.showStep("Building all dependencies first")
+        UserInterface.showStep("This ensures everything is up-to-date", isSubStep: true)
         
         do {
             try await buildDependencies(
@@ -184,12 +179,15 @@ public struct SwiftFuzzerCore {
                 fileSystem: fileSystem
             )
         } catch {
-            print("   ❌ Step 1 failed: \(error)")
-            throw error
+            let details = "\(error)"
+            let friendlyError = UserFriendlyError.compilationFailed(details)
+            UserInterface.reportError(friendlyError)
         }
         
+        UserInterface.showSuccess("Dependencies built successfully")
+        
         // Step 2: Link pre-built dependencies to fuzz directory
-        print("\n🔗 Step 2: Linking dependencies to fuzz build...")
+        UserInterface.showPhaseStart(.linkingDependencies)
         try await linkDependenciesToFuzzBuild(
             packagePath: packagePath,
             target: options.target,
@@ -199,8 +197,10 @@ public struct SwiftFuzzerCore {
             fuzzBuildPath: fuzzBuildPath
         )
         
+        UserInterface.showSuccess("Dependencies linked successfully")
+        
         // Step 3: Build only the specific target in .fuzz directory  
-        print("\n🎯 Step 3: Building target '\(options.target)' with isolated build...")
+        UserInterface.showPhaseStart(.compilingTarget)
         try await buildTargetWithFuzzInstrumentation(
             packagePath: packagePath,
             target: options.target,
@@ -215,11 +215,11 @@ public struct SwiftFuzzerCore {
             pluginCachePath: pluginCachePath
         )
         
-        print("\n✅ Hybrid build completed successfully!")
+        UserInterface.showSuccess("Fuzzer executable built successfully")
         
         // Run the fuzzer if not build-only mode
         if !options.buildOnly {
-            print("\n🚀 Running fuzzer...")
+            UserInterface.showPhaseStart(.running)
             let fuzzTargetBuildDir = fuzzBuildPath.appending(component: buildConfig.dirname)
             let fuzzerExecutable = fuzzTargetBuildDir.appending(component: options.target)
             
@@ -241,9 +241,8 @@ public struct SwiftFuzzerCore {
         observability: ObservabilitySystem,
         fileSystem: any FileSystem
     ) async throws {
-        print("   Building all dependencies with regular swift build subprocess...")
-        print("   Working directory: \(packagePath.pathString)")
-        print("   Configuration: \(buildConfig.dirname)")
+        UserInterface.showStep("Running swift build -c \(buildConfig.dirname)")
+        UserInterface.showStep("This may take a moment...", isSubStep: true)
         
         // Use subprocess swift build which is more reliable than internal BuildOperation
         let buildProcess = Process()
@@ -254,24 +253,24 @@ public struct SwiftFuzzerCore {
         ]
         buildProcess.currentDirectoryPath = packagePath.pathString
         
-        print("   Command: swift build -c \(buildConfig.dirname)")
-        print("   Starting build process...")
-        
-        // Use the simplest possible subprocess approach
-        buildProcess.standardOutput = nil
-        buildProcess.standardError = nil
+        // Capture output for better error reporting
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        buildProcess.standardOutput = outputPipe
+        buildProcess.standardError = errorPipe
         
         try buildProcess.run()
         buildProcess.waitUntilExit()
         
         let exitCode = buildProcess.terminationStatus
-        print("   Build process completed with exit code: \(exitCode)")
         
         guard exitCode == 0 else {
-            throw StringError("Dependencies build failed with exit code: \(exitCode)")
+            // Get error output for better reporting
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            let friendlyError = UserFriendlyError.compilationFailed(errorOutput)
+            UserInterface.reportError(friendlyError)  
         }
-        
-        print("   Dependencies build completed successfully!")
     }
     
     // Link pre-built dependencies to fuzz build directory
@@ -326,7 +325,8 @@ public struct SwiftFuzzerCore {
             }
         }
         
-        print("   Linking \(allDependencies.count) dependencies: \(allDependencies.sorted().joined(separator: ", "))")
+        UserInterface.showStep("Linking \(allDependencies.count) dependencies")
+        UserInterface.showStep("Dependencies: \(allDependencies.sorted().joined(separator: ", "))", isSubStep: true)
         
         // Link/copy dependency modules from regular build to fuzz build
         // SwiftPM uses different paths for target vs tool modules
@@ -348,11 +348,11 @@ public struct SwiftFuzzerCore {
                 if fileSystem.exists(sourceModule) && !fileSystem.exists(targetModule) {
                     do {
                         try fileSystem.createSymbolicLink(targetModule, pointingAt: sourceModule, relative: false)
-                        print("   Linked module: \(swiftModuleName)")
+                        UserInterface.showStep("✓ \(swiftModuleName)", isSubStep: true)
                     } catch {
                         // If symlink fails, try copying
                         try fileSystem.copy(from: sourceModule, to: targetModule)
-                        print("   Copied module: \(swiftModuleName)")
+                        UserInterface.showStep("✓ \(swiftModuleName) (copied)", isSubStep: true)
                     }
                     break // Found and linked, move to next dependency
                 }
@@ -388,18 +388,16 @@ public struct SwiftFuzzerCore {
                     if fileSystem.exists(sourceLib) && !fileSystem.exists(targetLib) {
                         do {
                             try fileSystem.createSymbolicLink(targetLib, pointingAt: sourceLib, relative: false)
-                            print("   Linked library: \(libName)")
+                            UserInterface.showStep("✓ \(libName)", isSubStep: true)
                         } catch {
                             try? fileSystem.copy(from: sourceLib, to: targetLib)
-                            print("   Copied library: \(libName)")
+                            UserInterface.showStep("✓ \(libName) (copied)", isSubStep: true)
                         }
                         break
                     }
                 }
             }
         }
-        
-        print("   Dependency linking completed!")
     }
     
     // Build target with fuzz instrumentation in .fuzz directory
@@ -479,8 +477,6 @@ public struct SwiftFuzzerCore {
         
         let dependencies = allDependencies
         
-        print("   Building target '\(target)' in isolation, linking to dependencies: \(dependencies.sorted().joined(separator: ", "))")
-        
         let targetBuildParameters = try BuildParameters(
             destination: .target,
             dataPath: fuzzBuildPath,
@@ -521,13 +517,14 @@ public struct SwiftFuzzerCore {
             disableSandbox: false
         )
         
-        print("   Building isolated target using direct Swift compiler invocation")
+        UserInterface.showStep("Using direct Swift compiler for maximum control")
         
         // Get target's source files
         let sourceTargetModule = graph.allModules.first { $0.name == target }!
         let sourceFiles = sourceTargetModule.sources.paths.map { $0.pathString }
         
-        print("   Found \(sourceFiles.count) source files for target '\(target)'")
+        UserInterface.showStep("Compiling \(sourceFiles.count) source files")
+        UserInterface.showStep("Linking to \(dependencies.count) dependencies", isSubStep: true)
         
         // Set up output directory early for fuzzer entrypoint generation
         let fuzzTargetBuildDir = fuzzBuildPath.appending(component: buildConfig.dirname)
@@ -635,7 +632,7 @@ public func LLVMFuzzerCustomCrossOver(
 """
         try fileSystem.writeFileContents(fuzzerEntrypointPath, string: fuzzerEntrypointContent)
         allSourceFiles.append(fuzzerEntrypointPath.pathString)
-        print("   Generated fuzzer entrypoint file: FuzzerEntrypoint.swift")
+        UserInterface.showStep("Generated fuzzer entrypoint", isSubStep: true)
         
         // Find object files for all dependencies after checking if target defines LLVMFuzzer
         for depName in allDependencies {
@@ -681,13 +678,14 @@ public func LLVMFuzzerCustomCrossOver(
                         macroPluginArgs.append(contentsOf: [
                             "-load-plugin-executable", "\(macroPluginPath.pathString)#\(depModule.name)"
                         ])
-                        print("   Loading macro plugin: \(depModule.name) at \(macroPluginPath.pathString)")
+                        UserInterface.showStep("Loading macro: \(depModule.name)", isSubStep: true)
                     }
                 }
             }
         }
         
-        print("   Found \(objectFiles.count) dependency object files to link")
+        var compileProgress = 1
+        let totalSteps = 3
         
         // Step 1: Compile target source files to object files
         // Use swiftc from PATH (swiftly-managed) instead of Xcode toolchain to get fuzzer support
@@ -721,9 +719,7 @@ public func LLVMFuzzerCustomCrossOver(
         // Add source files (including generated entrypoint if needed)
         compileArgs.append(contentsOf: allSourceFiles)
         
-        print("   Step 1: Compiling target source files to object files")
-        print("   Using compiler: \(compileArgs[0])")
-        print("   Compile command: \(compileArgs.joined(separator: " "))")
+        UserInterface.showProgress(compileProgress, totalSteps, "Compiling Swift sources")
         
         // Execute the compiler
         let compileProcess = Process()
@@ -735,15 +731,20 @@ public func LLVMFuzzerCustomCrossOver(
         compileProcess.waitUntilExit()
         
         guard compileProcess.terminationStatus == 0 else {
-            throw StringError("Swift compilation failed with exit code: \(compileProcess.terminationStatus)")
+            let friendlyError = UserFriendlyError.compilationFailed("Swift compiler failed with exit code: \(compileProcess.terminationStatus)")
+            UserInterface.reportError(friendlyError)
         }
+        
+        compileProgress += 1
+        UserInterface.showProgress(compileProgress, totalSteps, "Discovering object files")
         
         // Step 2: Find the generated object files for the target
         let targetObjectFiles = try fileSystem.getDirectoryContents(outputDir)
             .filter { $0.hasSuffix(".o") }
             .map { outputDir.appending(component: $0).pathString }
         
-        print("   Step 2: Linking \(targetObjectFiles.count) target object files with \(objectFiles.count) dependency object files")
+        compileProgress += 1
+        UserInterface.showProgress(compileProgress, totalSteps, "Linking fuzzer executable")
         
         // Step 3: Link all object files together
         var linkArgs = [
@@ -768,10 +769,9 @@ public func LLVMFuzzerCustomCrossOver(
         linkProcess.waitUntilExit()
         
         guard linkProcess.terminationStatus == 0 else {
-            throw StringError("Swift linking failed with exit code: \(linkProcess.terminationStatus)")
+            let friendlyError = UserFriendlyError.compilationFailed("Swift linker failed with exit code: \(linkProcess.terminationStatus)")
+            UserInterface.reportError(friendlyError)
         }
-        
-        print("   Direct Swift compilation completed successfully")
     }
     
     // Run the fuzzer executable with libFuzzer
@@ -785,7 +785,26 @@ public func LLVMFuzzerCustomCrossOver(
         
         // Ensure the executable exists
         guard fileSystem.exists(executablePath) else {
-            throw StringError("Fuzzer executable not found at: \(executablePath.pathString)")
+            let error = UserFriendlyError(
+                title: "Fuzzer executable not found",
+                description: "The compiled fuzzer executable is missing.",
+                possibleCauses: [
+                    "Compilation failed silently",
+                    "Output path configuration error",
+                    "Permissions issue"
+                ],
+                solutions: [
+                    "Try running with --build-only to check compilation",
+                    "Check file permissions in .fuzz directory",
+                    "Re-run the build process"
+                ],
+                example: "swift-fuzz --build-only --target \(options.target)",
+                relatedCommands: [
+                    "ls -la \(executablePath.pathString)",
+                    "find . -name '\(options.target)' -type f"
+                ]
+            )
+            UserInterface.reportError(error)
         }
         
         // Create corpus directory if specified or use default
@@ -798,7 +817,7 @@ public func LLVMFuzzerCustomCrossOver(
         
         if !fileSystem.exists(corpusPath) {
             try fileSystem.createDirectory(corpusPath, recursive: true)
-            print("   Created corpus directory: \(corpusPath.pathString)")
+            UserInterface.showStep("Created corpus directory: \(corpusPath.pathString)")
         }
         
         // Create crash analysis directory
@@ -806,6 +825,10 @@ public func LLVMFuzzerCustomCrossOver(
         if !fileSystem.exists(crashPath) {
             try fileSystem.createDirectory(crashPath, recursive: true)
         }
+        
+        UserInterface.showStep("Executable: \(executablePath.pathString)")
+        UserInterface.showStep("Corpus: \(corpusPath.pathString)")
+        UserInterface.showStep("Crashes will be saved to: \(crashPath.pathString)")
         
         // Build fuzzer arguments with crash artifact handling
         var fuzzerArgs: [String] = []
@@ -826,11 +849,6 @@ public func LLVMFuzzerCustomCrossOver(
         // Add corpus directory
         fuzzerArgs.append(corpusPath.pathString)
         
-        print("   Fuzzer executable: \(executablePath.pathString)")
-        print("   Corpus directory: \(corpusPath.pathString)")
-        print("   Crash artifacts: \(crashPath.pathString)")
-        print("   Fuzzer arguments: \(fuzzerArgs.joined(separator: " "))")
-        
         // Create pipes to capture output
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -843,8 +861,9 @@ public func LLVMFuzzerCustomCrossOver(
         fuzzerProcess.standardOutput = outputPipe
         fuzzerProcess.standardError = errorPipe
         
-        print("\n🔍 Starting libFuzzer (Press Ctrl+C to stop)...")
-        print("📊 Monitoring for crashes and providing instant analysis...")
+        print("\n🔍 Starting libFuzzer")
+        print("   Press Ctrl+C to stop")
+        print("   Real-time crash analysis enabled")
         
         // Start monitoring output in background
         let outputData = outputPipe.fileHandleForReading
@@ -881,23 +900,24 @@ public func LLVMFuzzerCustomCrossOver(
         
         // Check for crash artifacts and analyze them
         if exitCode != 0 {
-            print("\n🐛 Fuzzer detected issues (exit code: \(exitCode))")
+            UserInterface.showPhaseStart(.analyzing)
+            UserInterface.showStep("Exit code: \(exitCode)")
             await analyzeCrashArtifacts(crashPath: crashPath, packagePath: packagePath)
         } else {
-            print("\n✅ Fuzzer completed successfully - no crashes found!")
+            UserInterface.showSuccess("Fuzzing completed - no crashes found!")
         }
     }
     
     // Handle real-time crash detection
     static func handleCrashDetected(crashPath: Basics.AbsolutePath, packagePath: Basics.AbsolutePath) async {
-        print("\n🚨 CRASH DETECTED! Preparing analysis...")
+        UserInterface.showStep("🚨 CRASH DETECTED! Preparing analysis...")
     }
     
     // Analyze crash artifacts and provide user-friendly reports
     static func analyzeCrashArtifacts(crashPath: Basics.AbsolutePath, packagePath: Basics.AbsolutePath) async {
         let fileSystem = Basics.localFileSystem
         
-        print("\n🔍 Analyzing crash artifacts...")
+        UserInterface.showStep("Analyzing crash artifacts...")
         
         // First check for our enhanced crash analysis file
         let crashAnalysisPath = "/tmp/swift_fuzzer_crash_analysis.txt"
@@ -910,7 +930,7 @@ public func LLVMFuzzerCustomCrossOver(
                 try fileSystem.removeFileTree(analysisAbsPath)
                 return
             } catch {
-                print("   Error reading crash analysis file: \(error)")
+                UserInterface.showStep("Error reading crash analysis file: \(error)", isSubStep: true)
             }
         }
         
@@ -920,16 +940,20 @@ public func LLVMFuzzerCustomCrossOver(
                 .sorted()
             
             if crashFiles.isEmpty {
-                print("   No crash artifacts found in \(crashPath.pathString)")
-                print("   ⚠️  This might be a Swift fatal error - check console output above for details")
+                UserInterface.showStep("No crash artifacts found in \(crashPath.pathString)", isSubStep: true)
+                UserInterface.reportWarning(UserFriendlyWarning(
+                    title: "No crash artifacts generated",
+                    message: "This might be a Swift fatal error or runtime issue.",
+                    suggestion: "Check the console output above for error details."
+                ))
                 return
             }
             
-            print("   Found \(crashFiles.count) crash artifact(s):")
+            UserInterface.showStep("Found \(crashFiles.count) crash artifact(s)")
             
             for (index, crashFile) in crashFiles.enumerated() {
                 let crashFilePath = crashPath.appending(component: crashFile)
-                print("   📄 \(crashFile)")
+                UserInterface.showStep("📄 \(crashFile)", isSubStep: true)
                 
                 // Analyze the crash file
                 if let crashData = try? fileSystem.readFileContents(crashFilePath) {
@@ -968,25 +992,37 @@ public func LLVMFuzzerCustomCrossOver(
         index: Int,
         packagePath: Basics.AbsolutePath
     ) async {
-        print("\n" + String(repeating: "=", count: 60))
-        print("   🚨 CRASH #\(index): \(crashFileName)")
-        print(String(repeating: "=", count: 60))
-        
         // Use the crash analysis system we built
         if let report = FuzzTestRegistry.analyzeCrash(fromData: crashData) {
-            print(report)
+            // Parse the report and make it more user-friendly
+            let crash = CrashReport(
+                functionName: extractFunctionName(from: report) ?? "Unknown",
+                functionHash: extractFunctionHash(from: report) ?? 0,
+                inputSize: crashData.count,
+                crashType: extractCrashType(from: report),
+                reproductionCode: extractReproductionCode(from: report) ?? "// Unable to generate reproduction code",
+                rawInputHex: crashData.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " "),
+                suggestedFixes: generateSuggestedFixes(from: report),
+                artifactPath: crashFileName
+            )
+            UserInterface.reportCrash(crash)
         } else {
             // Fallback analysis for unrecognized crash data
-            print("""
-            ❌ Could not parse crash data format
-            
-            📊 Raw crash data:
-            • Size: \(crashData.count) bytes
-            • Hex: \(crashData.prefix(64).map { String(format: "%02X", $0) }.joined(separator: " "))\(crashData.count > 64 ? "..." : "")
-            
-            💡 This might be a crash format not yet supported by SwiftFuzzer's analysis.
-            You can still use this data to reproduce the crash manually.
-            """)
+            let crash = CrashReport(
+                functionName: "Unknown",
+                functionHash: 0,
+                inputSize: crashData.count,
+                crashType: .unknown("Unrecognized crash format"),
+                reproductionCode: "// Raw crash data - manual analysis required",
+                rawInputHex: crashData.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " "),
+                suggestedFixes: [
+                    "Examine the raw crash data manually",
+                    "Check for buffer overflows or memory access issues",
+                    "Review function logic with the given input size"
+                ],
+                artifactPath: crashFileName
+            )
+            UserInterface.reportCrash(crash)
         }
         
         // Create reproduction test file automatically
@@ -996,12 +1032,96 @@ public func LLVMFuzzerCustomCrossOver(
             outputPath: reproductionPath.pathString,
             testFunctionName: "testCrash\(index)Reproduction"
         ) {
-            print("""
-            
-            ✅ Auto-generated reproduction test at:
-               \(reproductionPath.pathString)
-            
-            """)
+            UserInterface.showSuccess("Auto-generated reproduction test: \(reproductionPath.pathString)")
         }
+    }
+    
+    // Helper functions for parsing crash reports
+    private static func extractFunctionName(from report: String) -> String? {
+        // Parse function name from crash analysis report
+        let lines = report.components(separatedBy: .newlines)
+        for line in lines {
+            if line.contains("Function:") {
+                return line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
+    }
+    
+    private static func extractFunctionHash(from report: String) -> UInt64? {
+        // Parse function hash from crash analysis report
+        let lines = report.components(separatedBy: .newlines)
+        for line in lines {
+            if line.contains("Hash:") {
+                let hashString = line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces)
+                if let hashString = hashString?.replacingOccurrences(of: "0x", with: "") {
+                    return UInt64(hashString, radix: 16)
+                }
+            }
+        }
+        return nil
+    }
+    
+    private static func extractCrashType(from report: String) -> CrashType {
+        let reportLower = report.lowercased()
+        if reportLower.contains("buffer overflow") || reportLower.contains("out of bounds") {
+            return .bufferOverflow
+        } else if reportLower.contains("null pointer") || reportLower.contains("segmentation fault") {
+            return .nullPointerDereference
+        } else if reportLower.contains("integer overflow") || reportLower.contains("arithmetic") {
+            return .integerOverflow
+        } else if reportLower.contains("assertion") || reportLower.contains("assert") {
+            return .assertionFailure
+        } else {
+            return .unknown("Unknown crash type")
+        }
+    }
+    
+    private static func extractReproductionCode(from report: String) -> String? {
+        // Parse Swift reproduction code from crash analysis report
+        let lines = report.components(separatedBy: .newlines)
+        var codeLines: [String] = []
+        var inCodeBlock = false
+        
+        for line in lines {
+            if line.contains("```swift") {
+                inCodeBlock = true
+                continue
+            } else if line.contains("```") && inCodeBlock {
+                break
+            } else if inCodeBlock {
+                codeLines.append(line)
+            }
+        }
+        
+        return codeLines.isEmpty ? nil : codeLines.joined(separator: "\n")
+    }
+    
+    private static func generateSuggestedFixes(from report: String) -> [String] {
+        let reportLower = report.lowercased()
+        var fixes: [String] = []
+        
+        if reportLower.contains("buffer overflow") {
+            fixes.append("Add bounds checking before array/buffer access")
+            fixes.append("Validate input size before processing")
+            fixes.append("Use safe array access methods like 'indices.contains(index)'")
+        }
+        
+        if reportLower.contains("null") || reportLower.contains("optional") {
+            fixes.append("Check for nil values before unwrapping optionals")
+            fixes.append("Use safe unwrapping with 'if let' or 'guard let'")
+        }
+        
+        if reportLower.contains("integer") || reportLower.contains("overflow") {
+            fixes.append("Check for integer overflow before arithmetic operations")
+            fixes.append("Use checked arithmetic operations")
+            fixes.append("Validate input ranges before calculations")
+        }
+        
+        // Always add general suggestions
+        fixes.append("Add input validation at function entry")
+        fixes.append("Write unit tests with edge cases")
+        
+        return fixes
     }
 }

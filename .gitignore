@@ -1,6 +1,7 @@
 .DS_Store
 .build
 .fuzz
+corpus
 /Packages
 xcuserdata/
 DerivedData/
